@@ -55,14 +55,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
+    const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
+      setLoading(false); // immédiat — ne pas attendre Firestore
       if (u) {
-        await fetchProfile(u.uid);
+        fetchProfile(u.uid); // chargement en arrière-plan
       } else {
         setProfile(null);
       }
-      setLoading(false);
     });
     return unsub;
   }, []);
