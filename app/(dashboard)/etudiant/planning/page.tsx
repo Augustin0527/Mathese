@@ -1,7 +1,13 @@
 'use client';
 
-import { useState } from 'react';
-import { Plus, CheckCircle2, Circle, Clock, AlertTriangle, ChevronDown } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import {
+  collection, addDoc, updateDoc, deleteDoc,
+  doc, onSnapshot, serverTimestamp, query, orderBy,
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase/config';
+import { useAuth } from '@/contexts/AuthContext';
+import { Plus, CheckCircle2, Circle, Clock, AlertTriangle, ChevronDown, Trash2, Loader2 } from 'lucide-react';
 
 type Statut = 'a_faire' | 'en_cours' | 'complete' | 'reporte';
 type Priorite = 'haute' | 'moyenne' | 'basse';
@@ -13,14 +19,8 @@ interface Objectif {
   dateEcheance: string;
   statut: Statut;
   priorite: Priorite;
+  createdAt?: unknown;
 }
-
-const OBJECTIFS_DEMO: Objectif[] = [
-  { id: '1', titre: 'Finaliser la revue de littérature', description: 'Couvrir les 3 dernières décennies sur le sujet.', dateEcheance: '2026-04-01', statut: 'en_cours', priorite: 'haute' },
-  { id: '2', titre: 'Rédiger la problématique', dateEcheance: '2026-04-15', statut: 'a_faire', priorite: 'haute' },
-  { id: '3', titre: 'Rencontrer le directeur pour feedback chapitre 1', dateEcheance: '2026-03-25', statut: 'a_faire', priorite: 'moyenne' },
-  { id: '4', titre: 'Lire les 5 articles recommandés', dateEcheance: '2026-03-20', statut: 'complete', priorite: 'moyenne' },
-];
 
 const STATUT_CONFIG: Record<Statut, { label: string; color: string; bg: string }> = {
   a_faire: { label: 'À faire', color: 'text-gray-500', bg: 'bg-gray-100' },
@@ -40,7 +40,9 @@ function estEnRetard(dateStr: string, statut: Statut) {
 }
 
 export default function PlanningPage() {
-  const [objectifs, setObjectifs] = useState<Objectif[]>(OBJECTIFS_DEMO);
+  const { user } = useAuth();
+  const [objectifs, setObjectifs] = useState<Objectif[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [filtreStatut, setFiltreStatut] = useState<Statut | 'tous'>('tous');
 
@@ -49,36 +51,58 @@ export default function PlanningPage() {
   const [dateEcheance, setDateEcheance] = useState('');
   const [priorite, setPriorite] = useState<Priorite>('moyenne');
 
-  function ajouterObjectif() {
-    if (!titre.trim() || !dateEcheance) return;
-    setObjectifs([
-      {
-        id: Date.now().toString(),
-        titre,
-        description,
-        dateEcheance,
-        statut: 'a_faire',
-        priorite,
-      },
-      ...objectifs,
-    ]);
+  useEffect(() => {
+    if (!user) return;
+    const col = collection(db, 'utilisateurs', user.uid, 'objectifs');
+    const q = query(col, orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setObjectifs(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Objectif, 'id'>) })));
+      setLoading(false);
+    });
+    return unsub;
+  }, [user]);
+
+  async function ajouterObjectif() {
+    if (!user || !titre.trim() || !dateEcheance) return;
+    await addDoc(collection(db, 'utilisateurs', user.uid, 'objectifs'), {
+      titre,
+      description,
+      dateEcheance,
+      statut: 'a_faire' as Statut,
+      priorite,
+      createdAt: serverTimestamp(),
+    });
     setTitre(''); setDescription(''); setDateEcheance(''); setPriorite('moyenne');
     setShowForm(false);
   }
 
-  function changerStatut(id: string, statut: Statut) {
-    setObjectifs((prev) => prev.map((o) => (o.id === id ? { ...o, statut } : o)));
+  async function changerStatut(id: string, statut: Statut) {
+    if (!user) return;
+    await updateDoc(doc(db, 'utilisateurs', user.uid, 'objectifs', id), { statut });
   }
 
-  const objectifsFiltres = filtreStatut === 'tous'
-    ? objectifs
-    : objectifs.filter((o) => o.statut === filtreStatut);
+  async function supprimerObjectif(id: string) {
+    if (!user) return;
+    await deleteDoc(doc(db, 'utilisateurs', user.uid, 'objectifs', id));
+  }
 
   const stats = {
     total: objectifs.length,
     complets: objectifs.filter((o) => o.statut === 'complete').length,
     enRetard: objectifs.filter((o) => estEnRetard(o.dateEcheance, o.statut)).length,
   };
+
+  const objectifsFiltres = filtreStatut === 'tous'
+    ? objectifs
+    : objectifs.filter((o) => o.statut === filtreStatut);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-6 h-6 text-indigo-600 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -102,20 +126,22 @@ export default function PlanningPage() {
       </div>
 
       {/* Barre de progression */}
-      <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-6 shadow-sm">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-gray-700">Progression globale</span>
-          <span className="text-sm font-bold text-indigo-600">
-            {stats.total > 0 ? Math.round((stats.complets / stats.total) * 100) : 0}%
-          </span>
+      {stats.total > 0 && (
+        <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-6 shadow-sm">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700">Progression globale</span>
+            <span className="text-sm font-bold text-indigo-600">
+              {Math.round((stats.complets / stats.total) * 100)}%
+            </span>
+          </div>
+          <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-indigo-600 rounded-full transition-all duration-500"
+              style={{ width: `${(stats.complets / stats.total) * 100}%` }}
+            />
+          </div>
         </div>
-        <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-indigo-600 rounded-full transition-all duration-500"
-            style={{ width: `${stats.total > 0 ? (stats.complets / stats.total) * 100 : 0}%` }}
-          />
-        </div>
-      </div>
+      )}
 
       {/* Formulaire */}
       {showForm && (
@@ -154,7 +180,11 @@ export default function PlanningPage() {
             </div>
           </div>
           <div className="flex gap-2 mt-4">
-            <button onClick={ajouterObjectif} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
+            <button
+              onClick={ajouterObjectif}
+              disabled={!titre.trim() || !dateEcheance}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
               Ajouter
             </button>
             <button onClick={() => setShowForm(false)} className="border border-gray-200 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 transition-colors">
@@ -227,24 +257,43 @@ export default function PlanningPage() {
                   </div>
                 </div>
 
-                {/* Changement de statut */}
-                <div className="relative">
-                  <select
-                    value={objectif.statut}
-                    onChange={(e) => changerStatut(objectif.id, e.target.value as Statut)}
-                    className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none pr-6 cursor-pointer"
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div className="relative">
+                    <select
+                      value={objectif.statut}
+                      onChange={(e) => changerStatut(objectif.id, e.target.value as Statut)}
+                      className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none pr-6 cursor-pointer"
+                    >
+                      <option value="a_faire">À faire</option>
+                      <option value="en_cours">En cours</option>
+                      <option value="complete">Complété</option>
+                      <option value="reporte">Reporté</option>
+                    </select>
+                    <ChevronDown className="w-3 h-3 text-gray-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                  <button
+                    onClick={() => supprimerObjectif(objectif.id)}
+                    className="text-gray-300 hover:text-red-400 transition-colors p-1"
                   >
-                    <option value="a_faire">À faire</option>
-                    <option value="en_cours">En cours</option>
-                    <option value="complete">Complété</option>
-                    <option value="reporte">Reporté</option>
-                  </select>
-                  <ChevronDown className="w-3 h-3 text-gray-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             </div>
           );
         })}
+
+        {objectifsFiltres.length === 0 && (
+          <div className="text-center py-16 text-gray-400">
+            <CheckCircle2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">
+              {filtreStatut === 'tous' ? 'Aucun objectif pour l\'instant' : `Aucun objectif "${STATUT_CONFIG[filtreStatut as Statut]?.label}"`}
+            </p>
+            {filtreStatut === 'tous' && (
+              <p className="text-xs mt-1">Cliquez sur &ldquo;Nouvel objectif&rdquo; pour commencer</p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

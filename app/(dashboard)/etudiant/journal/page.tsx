@@ -1,7 +1,13 @@
 'use client';
 
-import { useState } from 'react';
-import { Calendar, Plus, Smile, Meh, Frown, Laugh, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import {
+  collection, addDoc, updateDoc, deleteDoc,
+  doc, onSnapshot, serverTimestamp, query, orderBy,
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase/config';
+import { useAuth } from '@/contexts/AuthContext';
+import { Calendar, Plus, Smile, Meh, Frown, Laugh, AlertCircle, Loader2 } from 'lucide-react';
 
 interface EntreeJournal {
   id: string;
@@ -11,6 +17,7 @@ interface EntreeJournal {
   prochainePrioritee: string;
   humeur: 1 | 2 | 3 | 4 | 5;
   tempsPomodoro: number;
+  createdAt?: unknown;
 }
 
 const HUMEURS = [
@@ -21,25 +28,16 @@ const HUMEURS = [
   { val: 5 as const, label: 'Excellent', icon: Laugh, color: 'text-indigo-400' },
 ];
 
-const ENTREES_DEMO: EntreeJournal[] = [
-  {
-    id: '1',
-    date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
-    accomplissements: 'Relu 3 articles sur les méthodes qualitatives. Rédigé 500 mots sur la méthodologie.',
-    blocages: 'Difficulté à structurer la revue de littérature.',
-    prochainePrioritee: 'Finir la section 1.2 de la revue de littérature.',
-    humeur: 3,
-    tempsPomodoro: 100,
-  },
-];
-
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
 export default function JournalPage() {
-  const [entrees, setEntrees] = useState<EntreeJournal[]>(ENTREES_DEMO);
+  const { user } = useAuth();
+  const [entrees, setEntrees] = useState<EntreeJournal[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const [accomplissements, setAccomplissements] = useState('');
   const [blocages, setBlocages] = useState('');
@@ -48,23 +46,54 @@ export default function JournalPage() {
   const [tempsPomodoro, setTempsPomodoro] = useState(0);
 
   const aujourdhui = new Date().toISOString().split('T')[0];
+
+  useEffect(() => {
+    if (!user) return;
+    const col = collection(db, 'utilisateurs', user.uid, 'journal');
+    const q = query(col, orderBy('date', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setEntrees(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<EntreeJournal, 'id'>) })));
+      setLoading(false);
+    });
+    return unsub;
+  }, [user]);
+
   const entreeAujourdhui = entrees.find((e) => e.date === aujourdhui);
 
-  function enregistrer() {
-    if (!accomplissements.trim()) return;
-    const nouvelle: EntreeJournal = {
-      id: Date.now().toString(),
-      date: aujourdhui,
-      accomplissements,
-      blocages,
-      prochainePrioritee,
-      humeur,
-      tempsPomodoro,
-    };
-    setEntrees([nouvelle, ...entrees.filter((e) => e.date !== aujourdhui)]);
-    setAccomplissements(''); setBlocages(''); setProchainePrioritee('');
-    setHumeur(3); setTempsPomodoro(0);
-    setShowForm(false);
+  async function enregistrer() {
+    if (!user || !accomplissements.trim()) return;
+    setSaving(true);
+    try {
+      if (entreeAujourdhui) {
+        // Mettre à jour l'entrée existante du jour
+        await updateDoc(doc(db, 'utilisateurs', user.uid, 'journal', entreeAujourdhui.id), {
+          accomplissements, blocages, prochainePrioritee, humeur, tempsPomodoro,
+        });
+      } else {
+        await addDoc(collection(db, 'utilisateurs', user.uid, 'journal'), {
+          date: aujourdhui,
+          accomplissements,
+          blocages,
+          prochainePrioritee,
+          humeur,
+          tempsPomodoro,
+          createdAt: serverTimestamp(),
+        });
+      }
+      setAccomplissements(''); setBlocages(''); setProchainePrioritee('');
+      setHumeur(3); setTempsPomodoro(0);
+      setShowForm(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-6 h-6 text-indigo-600 animate-spin" />
+      </div>
+    );
   }
 
   return (
@@ -74,9 +103,9 @@ export default function JournalPage() {
           <h1 className="text-2xl font-bold text-gray-900">Journal de bord</h1>
           <p className="text-gray-500 text-sm mt-0.5">Suivi quotidien de votre progression</p>
         </div>
-        {!entreeAujourdhui && (
+        {!entreeAujourdhui && !showForm && (
           <button
-            onClick={() => setShowForm(!showForm)}
+            onClick={() => setShowForm(true)}
             className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
           >
             <Plus className="w-4 h-4" />
@@ -169,9 +198,10 @@ export default function JournalPage() {
           <div className="flex gap-2 mt-5">
             <button
               onClick={enregistrer}
-              disabled={!accomplissements.trim()}
-              className="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              disabled={!accomplissements.trim() || saving}
+              className="flex items-center gap-2 bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
             >
+              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
               Enregistrer
             </button>
             <button
@@ -186,20 +216,37 @@ export default function JournalPage() {
 
       {/* Entrée du jour déjà faite */}
       {entreeAujourdhui && !showForm && (
-        <div className="bg-green-50 border border-green-100 rounded-2xl p-4 mb-6 flex items-center gap-3">
-          <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-            <Smile className="w-4 h-4 text-green-600" />
+        <div className="bg-green-50 border border-green-100 rounded-2xl p-4 mb-6 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+              <Smile className="w-4 h-4 text-green-600" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-green-800">Bilan du jour enregistré ✓</p>
+              <p className="text-xs text-green-600">{entreeAujourdhui.accomplissements.slice(0, 60)}{entreeAujourdhui.accomplissements.length > 60 ? '…' : ''}</p>
+            </div>
           </div>
-          <div>
-            <p className="text-sm font-medium text-green-800">Bilan du jour enregistré ✓</p>
-            <p className="text-xs text-green-600">{entreeAujourdhui.accomplissements.slice(0, 60)}…</p>
-          </div>
+          <button
+            onClick={() => {
+              setAccomplissements(entreeAujourdhui.accomplissements);
+              setBlocages(entreeAujourdhui.blocages);
+              setProchainePrioritee(entreeAujourdhui.prochainePrioritee);
+              setHumeur(entreeAujourdhui.humeur);
+              setTempsPomodoro(entreeAujourdhui.tempsPomodoro);
+              setShowForm(true);
+            }}
+            className="text-xs text-green-600 hover:text-green-800 underline flex-shrink-0"
+          >
+            Modifier
+          </button>
         </div>
       )}
 
       {/* Historique */}
       <div className="space-y-4">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Historique</h2>
+        {entrees.length > 0 && (
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Historique</h2>
+        )}
         {entrees.map((entree) => {
           const humeurData = HUMEURS.find((h) => h.val === entree.humeur)!;
           return (
@@ -238,6 +285,14 @@ export default function JournalPage() {
             </div>
           );
         })}
+
+        {entrees.length === 0 && !showForm && (
+          <div className="text-center py-16 text-gray-400">
+            <Calendar className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">Aucune entrée pour l&apos;instant</p>
+            <p className="text-xs mt-1">Commencez votre premier bilan du jour</p>
+          </div>
+        )}
       </div>
     </div>
   );
