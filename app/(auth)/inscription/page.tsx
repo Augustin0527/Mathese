@@ -6,7 +6,6 @@ import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase/config';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import type { Role } from '@/types';
 
@@ -29,7 +28,6 @@ function getErreurMessage(code: string): string {
 
 export default function InscriptionPage() {
   const router = useRouter();
-  const { refreshProfile } = useAuth();
   const [prenom, setPrenom] = useState('');
   const [nom, setNom] = useState('');
   const [email, setEmail] = useState('');
@@ -54,11 +52,10 @@ export default function InscriptionPage() {
         profilComplet: false,
         createdAt: serverTimestamp(),
       });
-      // Charger le profil avant de naviguer — évite la race condition
-      await refreshProfile();
+      // Compte créé et doc Firestore enregistré — on peut naviguer
       setEtape('succes');
       setTimeout(() => {
-        router.push(role === 'etudiant' ? '/etudiant' : '/directeur');
+        router.push(role === 'directeur' ? '/directeur' : '/etudiant');
       }, 1500);
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code ?? '';
@@ -67,7 +64,6 @@ export default function InscriptionPage() {
     }
   }
 
-  // Écran de succès
   if (etape === 'succes') {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">

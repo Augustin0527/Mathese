@@ -42,8 +42,14 @@ export default function ConnexionPage() {
     setChargement(true);
     try {
       const { user } = await signInWithEmailAndPassword(auth, email, motDePasse);
-      const snap = await getDoc(doc(db, 'utilisateurs', user.uid));
-      const role = snap.exists() ? snap.data().role : 'etudiant';
+      // Lire le rôle depuis Firestore pour rediriger vers le bon espace
+      let role = 'etudiant';
+      try {
+        const snap = await getDoc(doc(db, 'utilisateurs', user.uid));
+        if (snap.exists()) role = snap.data().role ?? 'etudiant';
+      } catch {
+        // Si Firestore échoue, on va quand même sur l'espace étudiant par défaut
+      }
       router.push(role === 'directeur' ? '/directeur' : '/etudiant');
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code ?? '';

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/layout/Sidebar';
 import { useAuth } from '@/contexts/AuthContext';
@@ -8,13 +8,22 @@ import { useAuth } from '@/contexts/AuthContext';
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const redirectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    // On ne redirige que si le chargement est terminé ET l'utilisateur n'est pas connecté
+    // On ajoute un délai court pour éviter les faux positifs (ex: juste après inscription)
     if (!loading && !user) {
-      router.replace('/connexion');
+      redirectTimer.current = setTimeout(() => {
+        router.replace('/connexion');
+      }, 200);
     }
+    return () => {
+      if (redirectTimer.current) clearTimeout(redirectTimer.current);
+    };
   }, [user, loading, router]);
 
+  // Afficher le spinner pendant le chargement auth
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50">
