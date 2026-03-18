@@ -97,7 +97,8 @@ export default function ProfilPage() {
         photoURL,
         profilComplet: true,
       });
-      await refreshProfile();
+      // Pas d'await — refreshProfile peut être lent, on ne bloque pas le bouton
+      refreshProfile().catch(() => {});
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } finally {
