@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
 
   const stream = anthropic.messages.stream({
     model: 'claude-sonnet-4-6',
-    max_tokens: 1024,
+    max_tokens: 4096,
     system: `Tu es un assistant académique spécialisé en recherche doctorale. ${sujetThese ? `Le sujet de thèse de l'étudiant est : "${sujetThese}".` : ''}
 Tu aides l'étudiant à comprendre des concepts, explorer sa bibliographie, structurer ses idées, formuler des hypothèses et trouver des pistes de recherche.
 Sois précis, bienveillant et utilise un vocabulaire académique en français.`,
