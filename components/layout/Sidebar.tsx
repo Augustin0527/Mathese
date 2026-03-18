@@ -14,6 +14,7 @@ import {
   LogOut,
   GraduationCap,
   UserCircle,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -24,6 +25,7 @@ const NAV_ETUDIANT = [
   { href: '/etudiant/planning', icon: Target, label: 'Planning' },
   { href: '/etudiant/chapitres', icon: FileText, label: 'Chapitres' },
   { href: '/etudiant/journal', icon: Calendar, label: 'Journal' },
+  { href: '/etudiant/recherche', icon: Sparkles, label: 'Recherche IA' },
 ];
 
 const NAV_DIRECTEUR = [

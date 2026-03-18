@@ -1,6 +1,11 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  getFirestore,
+} from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -15,6 +20,22 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// Active le cache offline (IndexedDB) : les données se chargent instantanément
+// après la première visite, même sans réseau
+function getDb() {
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+  } catch {
+    // initializeFirestore ne peut être appelé qu'une fois — on utilise getFirestore au reload
+    return getFirestore(app);
+  }
+}
+
+export const db = getDb();
 export const storage = getStorage(app);
 export default app;
