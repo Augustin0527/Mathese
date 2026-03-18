@@ -6,7 +6,7 @@ import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/aut
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase/config';
 import { useRouter } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Eye, EyeOff } from 'lucide-react';
 
 function getErreurMessage(code: string): string {
   switch (code) {
@@ -35,6 +35,7 @@ export default function ConnexionPage() {
   const [chargement, setChargement] = useState(false);
   const [resetEnvoi, setResetEnvoi] = useState(false);
   const [resetChargement, setResetChargement] = useState(false);
+  const [voirMdp, setVoirMdp] = useState(false);
 
   async function handleConnexion(e: React.FormEvent) {
     e.preventDefault();
@@ -115,15 +116,24 @@ export default function ConnexionPage() {
                   {resetChargement ? 'Envoi...' : 'Mot de passe oublié ?'}
                 </button>
               </div>
-              <input
-                type="password"
-                value={motDePasse}
-                onChange={(e) => setMotDePasse(e.target.value)}
-                required
-                autoComplete="current-password"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder="••••••••"
-              />
+              <div className="relative">
+                <input
+                  type={voirMdp ? 'text' : 'password'}
+                  value={motDePasse}
+                  onChange={(e) => setMotDePasse(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  onClick={() => setVoirMdp(!voirMdp)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {voirMdp ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             {resetEnvoi && (
