@@ -1,11 +1,20 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { doc, updateDoc, collection, addDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, collection, addDoc, getDocs, query, where, serverTimestamp, setDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase/config';
 import { useAuth } from '@/contexts/AuthContext';
-import { Camera, Save, UserPlus, Mail, Check, X, Loader2 } from 'lucide-react';
+import { Camera, Save, UserPlus, Mail, Check, X, Loader2, AlertCircle } from 'lucide-react';
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), ms)
+    ),
+  ]);
+}
 
 const NIVEAUX = ['Master', 'Doctorat', 'Post-doctorat', 'Chercheur'] as const;
 
@@ -41,6 +50,7 @@ export default function ProfilPage() {
   // Sauvegarde
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     if (profile) {
@@ -86,21 +96,24 @@ export default function ProfilPage() {
     e.preventDefault();
     if (!user) return;
     setSaving(true);
+    setSaveError('');
     try {
-      await updateDoc(doc(db, 'utilisateurs', user.uid), {
-        nom,
-        prenom,
-        pseudo,
-        niveau,
-        institution,
-        sujetRecherche,
-        photoURL,
-        profilComplet: true,
-      });
-      // Pas d'await — refreshProfile peut être lent, on ne bloque pas le bouton
+      const data = { nom, prenom, pseudo, niveau, institution, sujetRecherche, photoURL, profilComplet: true };
+      // Timeout de 8 secondes — si Firestore ne répond pas, on affiche une erreur claire
+      await withTimeout(
+        setDoc(doc(db, 'utilisateurs', user.uid), data, { merge: true }),
+        8000
+      );
       refreshProfile().catch(() => {});
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
+    } catch (err: unknown) {
+      const msg = (err as Error)?.message ?? '';
+      if (msg === 'timeout') {
+        setSaveError('Connexion lente. Réessayez ou vérifiez votre réseau.');
+      } else {
+        setSaveError('Erreur lors de la sauvegarde. Réessayez.');
+      }
     } finally {
       setSaving(false);
     }
@@ -253,6 +266,13 @@ export default function ProfilPage() {
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         </div>
+
+        {saveError && (
+          <div className="flex items-center gap-2 bg-red-50 border border-red-100 px-3 py-2.5 rounded-lg">
+            <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+            <p className="text-sm text-red-700">{saveError}</p>
+          </div>
+        )}
 
         <button
           type="submit"
