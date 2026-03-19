@@ -265,57 +265,62 @@ export async function POST(req: NextRequest) {
 
   if (!titre) return NextResponse.json({ error: 'Titre requis' }, { status: 400 });
 
-  // Contexte des articles trouvés
-  const articlesContext = (articles as ArticleRef[] | undefined)?.length
-    ? `\n\nArticles académiques disponibles pour ce document :\n${
-        (articles as ArticleRef[]).map((a, i) =>
-          `[${i + 1}] "${a.titre}" — ${a.auteurs || 'Auteur inconnu'} (${a.annee || '?'})` +
-          (a.doi ? ` · DOI: ${a.doi}` : '') +
-          (a.abstract ? `\n    Résumé: ${a.abstract.slice(0, 300)}` : '')
-        ).join('\n')
-      }`
-    : '';
+  try {
+    // Limiter les articles à 6 max avec abstracts courts pour ne pas surcharger le contexte
+    const articlesLimites = ((articles as ArticleRef[] | undefined) ?? []).slice(0, 6);
+    const articlesContext = articlesLimites.length
+      ? `\n\nArticles académiques disponibles :\n${
+          articlesLimites.map((a, i) =>
+            `[${i + 1}] "${a.titre}" — ${a.auteurs || 'Auteur inconnu'} (${a.annee || '?'})` +
+            (a.doi ? ` DOI: ${a.doi}` : '') +
+            (a.abstract ? `\n    Résumé: ${a.abstract.slice(0, 200)}` : '')
+          ).join('\n')
+        }`
+      : '';
 
-  // ── Appel Claude pour générer le contenu du document ──
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 6000,
-    system: 'Tu es expert en rédaction académique universitaire. Tu produis uniquement du contenu structuré en markdown pur, sans commentaires ni préambule — le document commence directement par son contenu.',
-    messages: [{
-      role: 'user',
-      content: `Rédige un document académique complet et structuré en markdown.
+    // ── Appel Claude pour générer le contenu ──
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3500,
+      system: 'Tu es expert en rédaction académique. Tu produis uniquement du contenu markdown structuré, sans commentaire ni préambule. Le document commence directement.',
+      messages: [{
+        role: 'user',
+        content: `Rédige un document académique structuré en markdown.
 
 **Titre :** "${titre}"
-${sujetThese ? `**Contexte de thèse :** ${sujetThese}` : ''}
+${sujetThese ? `**Contexte :** ${sujetThese}` : ''}
 **Demande :** ${userRequest || titre}
 ${articlesContext}
 
-**Instructions :**
-- Commence directement par le contenu (pas d'introduction du type "Voici le document...")
-- Structure : Introduction → Sections développées (## titres) → Conclusion → Références
-- Intègre les articles disponibles en citation dans le texte et en bibliographie finale
-- Niveau académique rigoureux, ~1500 mots minimum
-- Format markdown pur : # ## ### **gras** *italique* - listes | tableaux |`,
-    }],
-  });
+Structure requise : Introduction → Sections (## titres) → Conclusion → Références
+- Intègre les articles en citation [X] dans le texte et en bibliographie
+- Niveau académique, 1000-1500 mots
+- Markdown pur : ## ### **gras** - listes`,
+      }],
+    });
 
-  const markdown = response.content[0]?.type === 'text' ? response.content[0].text : '';
+    const markdown = response.content[0]?.type === 'text' ? response.content[0].text : '';
 
-  if (!markdown || markdown.length < 100) {
-    return NextResponse.json({ error: 'Contenu généré insuffisant' }, { status: 500 });
+    if (!markdown || markdown.length < 50) {
+      console.error('[generate-doc] Markdown vide ou insuffisant');
+      return NextResponse.json({ error: 'Contenu insuffisant' }, { status: 500 });
+    }
+
+    // ── Convertir markdown → Word ──
+    const doc = markdownToDocx(markdown, titre, auteur, sujetThese);
+    const buffer = await Packer.toBuffer(doc);
+    const uint8 = new Uint8Array(buffer);
+    const filename = titre.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
+
+    return new NextResponse(uint8, {
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': `attachment; filename="${filename}.docx"`,
+      },
+    });
+
+  } catch (err) {
+    console.error('[generate-doc] Erreur:', err);
+    return NextResponse.json({ error: 'Erreur serveur lors de la génération' }, { status: 500 });
   }
-
-  // ── Convertir markdown → Word ──
-  const doc = markdownToDocx(markdown, titre, auteur, sujetThese);
-  const buffer = await Packer.toBuffer(doc);
-  const uint8 = new Uint8Array(buffer);
-
-  const filename = titre.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
-
-  return new NextResponse(uint8, {
-    headers: {
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'Content-Disposition': `attachment; filename="${filename}.docx"`,
-    },
-  });
 }
