@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import ReactMarkdown from 'react-markdown';
@@ -9,6 +9,8 @@ import type { Components } from 'react-markdown';
 import {
   Send, Loader2, Sparkles, BookOpen, ExternalLink,
   Plus, CheckCircle2, Copy, Check, FileSearch, FileDown,
+  MessageSquarePlus, Trash2, Pencil, X, ChevronLeft, ChevronRight,
+  MessagesSquare,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -37,6 +39,13 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   proposeWord?: boolean;
+}
+
+interface Conversation {
+  id: string;
+  titre: string;
+  created_at: string;
+  updated_at: string;
 }
 
 // ─── Composant table avec copie ───────────────────────────────────────────────
@@ -84,7 +93,6 @@ function CopyableTable({ children }: { children: React.ReactNode }) {
 
 function MarkdownMessage({ content }: { content: string }) {
   const components: Components = {
-    // Titres
     h1: ({ children }) => (
       <h1 className="text-base font-bold text-gray-900 mt-5 mb-2 pb-1 border-b border-gray-100">{children}</h1>
     ),
@@ -97,100 +105,46 @@ function MarkdownMessage({ content }: { content: string }) {
     h3: ({ children }) => (
       <h3 className="text-sm font-semibold text-gray-800 mt-3 mb-1.5">{children}</h3>
     ),
-
-    // Paragraphes
     p: ({ children }) => (
       <p className="text-sm text-gray-800 leading-relaxed my-2">{children}</p>
     ),
-
-    // Listes à puces
-    ul: ({ children }) => (
-      <ul className="my-2 space-y-1.5 pl-1">{children}</ul>
-    ),
-    ol: ({ children }) => (
-      <ol className="my-2 space-y-1.5 pl-1 list-decimal list-inside">{children}</ol>
-    ),
+    ul: ({ children }) => <ul className="my-2 space-y-1.5 pl-1">{children}</ul>,
+    ol: ({ children }) => <ol className="my-2 space-y-1.5 pl-1 list-decimal list-inside">{children}</ol>,
     li: ({ children }) => (
       <li className="text-sm text-gray-800 leading-relaxed flex items-start gap-2">
         <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-indigo-400 flex-shrink-0" />
         <span>{children}</span>
       </li>
     ),
-
-    // Code inline
     code: ({ className, children, ...props }) => {
       const isBlock = className?.includes('language-');
       if (isBlock) {
-        return (
-          <code className="block w-full text-xs text-indigo-800 font-mono leading-relaxed whitespace-pre-wrap">
-            {children}
-          </code>
-        );
+        return <code className="block w-full text-xs text-indigo-800 font-mono leading-relaxed whitespace-pre-wrap">{children}</code>;
       }
-      return (
-        <code className="text-xs text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded font-mono" {...props}>
-          {children}
-        </code>
-      );
+      return <code className="text-xs text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded font-mono" {...props}>{children}</code>;
     },
-
-    // Bloc de code
     pre: ({ children }) => (
-      <pre className="my-3 bg-gray-900 text-gray-100 rounded-xl p-4 text-xs overflow-x-auto border border-gray-700 leading-relaxed">
-        {children}
-      </pre>
+      <pre className="my-3 bg-gray-900 text-gray-100 rounded-xl p-4 text-xs overflow-x-auto border border-gray-700 leading-relaxed">{children}</pre>
     ),
-
-    // Citation
     blockquote: ({ children }) => (
-      <blockquote className="my-3 border-l-4 border-indigo-400 bg-indigo-50 pl-4 pr-3 py-2 rounded-r-xl text-sm text-indigo-800 italic">
-        {children}
-      </blockquote>
+      <blockquote className="my-3 border-l-4 border-indigo-400 bg-indigo-50 pl-4 pr-3 py-2 rounded-r-xl text-sm text-indigo-800 italic">{children}</blockquote>
     ),
-
-    // Séparateur
     hr: () => <hr className="my-4 border-gray-100" />,
-
-    // Gras / italique
-    strong: ({ children }) => (
-      <strong className="font-semibold text-gray-900">{children}</strong>
-    ),
-    em: ({ children }) => (
-      <em className="italic text-gray-700">{children}</em>
-    ),
-
-    // Lien
+    strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
+    em: ({ children }) => <em className="italic text-gray-700">{children}</em>,
     a: ({ href, children }) => (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800 transition-colors"
-      >
-        {children}
-      </a>
+      <a href={href} target="_blank" rel="noopener noreferrer"
+        className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800 transition-colors">{children}</a>
     ),
-
-    // ── Tableau avec bordures visibles + bouton copie ──
     table: ({ children }) => <CopyableTable>{children}</CopyableTable>,
-    thead: ({ children }) => (
-      <thead className="bg-indigo-600 text-white">{children}</thead>
-    ),
-    tbody: ({ children }) => (
-      <tbody className="divide-y divide-gray-100">{children}</tbody>
-    ),
-    tr: ({ children }) => (
-      <tr className="hover:bg-indigo-50/40 transition-colors">{children}</tr>
-    ),
+    thead: ({ children }) => <thead className="bg-indigo-600 text-white">{children}</thead>,
+    tbody: ({ children }) => <tbody className="divide-y divide-gray-100">{children}</tbody>,
+    tr: ({ children }) => <tr className="hover:bg-indigo-50/40 transition-colors">{children}</tr>,
     th: ({ children }) => (
-      <th className="text-left text-xs font-semibold px-4 py-2.5 border-r border-indigo-500 last:border-r-0 whitespace-nowrap">
-        {children}
-      </th>
+      <th className="text-left text-xs font-semibold px-4 py-2.5 border-r border-indigo-500 last:border-r-0 whitespace-nowrap">{children}</th>
     ),
     td: ({ children }) => (
-      <td className="text-sm text-gray-700 px-4 py-2.5 border-r border-gray-100 last:border-r-0 align-top leading-relaxed">
-        {children}
-      </td>
+      <td className="text-sm text-gray-700 px-4 py-2.5 border-r border-gray-100 last:border-r-0 align-top leading-relaxed">{children}</td>
     ),
   };
 
@@ -208,46 +162,152 @@ function MarkdownMessage({ content }: { content: string }) {
 export default function RecherchePage() {
   const { user, profile } = useAuth();
 
+  // ── Bibliothèque ──
   const [biblioExistante, setBiblioExistante] = useState<ArticleBiblio[]>([]);
+
+  // ── Conversations (historique) ──
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [currentConvId, setCurrentConvId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // ── Chat ──
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [exportingWord, setExportingWord] = useState<number | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // ── Édition de message ──
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState('');
+
+  // ── Résultats IA ──
   const [articlesIA, setArticlesIA] = useState<ArticleCrossRef[]>([]);
   const [ajoutesIA, setAjoutesIA] = useState<Set<number>>(new Set());
-  const [exportingWord, setExportingWord] = useState<number | null>(null);
 
+  // ─── Chargements initiaux ────────────────────────────────────────────────
   useEffect(() => {
     if (!user) return;
-    supabase
-      .from('articles')
-      .select('id, titre, auteurs, annee, doi, abstract, notes')
+    supabase.from('articles').select('id, titre, auteurs, annee, doi, abstract, notes')
       .eq('user_id', user.id)
-      .then(({ data }) => {
-        if (data) setBiblioExistante(data as ArticleBiblio[]);
-      });
+      .then(({ data }) => { if (data) setBiblioExistante(data as ArticleBiblio[]); });
+    loadConversations();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  async function envoyerMessage() {
-    if (!input.trim() || chatLoading) return;
+  // ─── Chargement de la liste des conversations ────────────────────────────
+  async function loadConversations() {
+    if (!user) return;
+    const { data } = await supabase
+      .from('conversations')
+      .select('id, titre, created_at, updated_at')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false });
+    if (data) setConversations(data as Conversation[]);
+  }
 
-    const userMsg: ChatMessage = { role: 'user', content: input.trim() };
-    const newMessages: ChatMessage[] = [...messages, userMsg];
+  // ─── Charger une conversation existante ─────────────────────────────────
+  async function ouvrirConversation(convId: string) {
+    if (chatLoading) return;
+    setCurrentConvId(convId);
+    setArticlesIA([]);
+    setAjoutesIA(new Set());
+    const { data } = await supabase
+      .from('conversation_messages')
+      .select('role, content, propose_word')
+      .eq('conversation_id', convId)
+      .order('created_at', { ascending: true });
+    if (data) {
+      setMessages(data.map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        proposeWord: m.propose_word ?? false,
+      })));
+    }
+  }
+
+  // ─── Nouvelle conversation ───────────────────────────────────────────────
+  function nouvelleConversation() {
+    setCurrentConvId(null);
+    setMessages([]);
+    setArticlesIA([]);
+    setAjoutesIA(new Set());
+    setInput('');
+  }
+
+  // ─── Supprimer une conversation ─────────────────────────────────────────
+  async function supprimerConversation(convId: string) {
+    setDeletingId(convId);
+    await supabase.from('conversations').delete().eq('id', convId);
+    setConversations((prev) => prev.filter((c) => c.id !== convId));
+    if (currentConvId === convId) {
+      setCurrentConvId(null);
+      setMessages([]);
+    }
+    setDeletingId(null);
+  }
+
+  // ─── Sauvegarder un message en base ─────────────────────────────────────
+  const sauvegarderMessage = useCallback(async (
+    convId: string,
+    msg: ChatMessage
+  ) => {
+    await supabase.from('conversation_messages').insert({
+      conversation_id: convId,
+      role: msg.role,
+      content: msg.content,
+      propose_word: msg.proposeWord ?? false,
+    });
+    await supabase.from('conversations')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', convId);
+  }, []);
+
+  // ─── Envoi d'un message ──────────────────────────────────────────────────
+  async function envoyerMessage(inputOverride?: string, messagesOverride?: ChatMessage[]) {
+    const texte = (inputOverride ?? input).trim();
+    if (!texte || chatLoading) return;
+
+    const baseMessages = messagesOverride ?? messages;
+    const userMsg: ChatMessage = { role: 'user', content: texte };
+    const newMessages: ChatMessage[] = [...baseMessages, userMsg];
     setMessages(newMessages);
     setInput('');
     setChatLoading(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
-
     setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
+
+    // Créer la conversation en base si elle n'existe pas encore
+    let convId = currentConvId;
+    if (!convId && user) {
+      const titre = texte.slice(0, 70).trim();
+      const { data } = await supabase.from('conversations').insert({
+        user_id: user.id,
+        titre,
+      }).select('id').single();
+      if (data) {
+        convId = data.id;
+        setCurrentConvId(convId);
+        setConversations((prev) => [{
+          id: data.id,
+          titre,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }, ...prev]);
+      }
+    }
+
+    // Sauvegarder le message utilisateur
+    if (convId) await sauvegarderMessage(convId, userMsg);
 
     try {
       const res = await fetch('/api/ai/chat', {
@@ -283,36 +343,37 @@ export default function RecherchePage() {
         });
       }
 
+      // Extraire articles
       const separatorIdx = fullText.indexOf('\n\n__SEARCH_RESULTS__');
       if (separatorIdx >= 0) {
-        const jsonStr = fullText.slice(separatorIdx + '\n\n__SEARCH_RESULTS__'.length);
         try {
-          const articles: ArticleCrossRef[] = JSON.parse(jsonStr);
-          if (articles.length > 0) {
-            setArticlesIA(articles);
-            setAjoutesIA(new Set());
-          }
-        } catch {
-          // JSON mal formé : on ignore
-        }
+          const articles: ArticleCrossRef[] = JSON.parse(
+            fullText.slice(separatorIdx + '\n\n__SEARCH_RESULTS__'.length)
+          );
+          if (articles.length > 0) { setArticlesIA(articles); setAjoutesIA(new Set()); }
+        } catch { /* ignore */ }
       }
 
       let visibleFinal = separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText;
       const proposeWord = visibleFinal.includes('__PROPOSE_WORD__');
       visibleFinal = visibleFinal.replace(/\n*__PROPOSE_WORD__\n*/g, '').trim();
 
+      const assistantMsg: ChatMessage = { role: 'assistant', content: visibleFinal, proposeWord };
       setMessages((prev) => {
         const updated = [...prev];
-        updated[updated.length - 1] = { role: 'assistant', content: visibleFinal, proposeWord };
+        updated[updated.length - 1] = assistantMsg;
         return updated;
       });
 
+      // Sauvegarder la réponse IA
+      if (convId) await sauvegarderMessage(convId, assistantMsg);
+
     } catch (err: unknown) {
       if ((err as Error).name === 'AbortError') return;
+      const errorMsg: ChatMessage = { role: 'assistant', content: 'Erreur de connexion. Réessayez.' };
       setMessages((prev) => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
-        const errorMsg: ChatMessage = { role: 'assistant', content: 'Erreur de connexion. Réessayez.' };
         if (last?.role === 'assistant' && !last.content) updated[updated.length - 1] = errorMsg;
         else updated.push(errorMsg);
         return updated;
@@ -323,6 +384,45 @@ export default function RecherchePage() {
     }
   }
 
+  // ─── Édition d'un message utilisateur ────────────────────────────────────
+  function commencerEdition(index: number) {
+    setEditingIndex(index);
+    setEditValue(messages[index].content);
+  }
+
+  async function soumettreEdition() {
+    if (editingIndex === null || !editValue.trim()) return;
+
+    // Supprimer tous les messages à partir de ce point en base
+    if (currentConvId) {
+      // Recharger les IDs et supprimer
+      const { data: dbMessages } = await supabase
+        .from('conversation_messages')
+        .select('id, created_at')
+        .eq('conversation_id', currentConvId)
+        .order('created_at', { ascending: true });
+
+      if (dbMessages && dbMessages[editingIndex]) {
+        const cutoffDate = dbMessages[editingIndex].created_at;
+        await supabase
+          .from('conversation_messages')
+          .delete()
+          .eq('conversation_id', currentConvId)
+          .gte('created_at', cutoffDate);
+      }
+    }
+
+    // Tronquer les messages locaux jusqu'à l'index édité
+    const truncated = messages.slice(0, editingIndex);
+    setMessages(truncated);
+    setEditingIndex(null);
+
+    // Renvoyer avec le nouveau texte
+    await envoyerMessage(editValue, truncated);
+    setEditValue('');
+  }
+
+  // ─── Export Word ─────────────────────────────────────────────────────────
   async function exporterWord(content: string, index: number) {
     if (exportingWord !== null) return;
     setExportingWord(index);
@@ -346,12 +446,13 @@ export default function RecherchePage() {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      alert('Erreur lors de la génération Word. Réessayez.');
+      alert('Erreur lors de la génération Word.');
     } finally {
       setExportingWord(null);
     }
   }
 
+  // ─── Ajouter article ─────────────────────────────────────────────────────
   async function ajouterArticleIA(article: ArticleCrossRef, index: number) {
     if (!user || ajoutesIA.has(index)) return;
     await supabase.from('articles').insert({
@@ -368,12 +469,82 @@ export default function RecherchePage() {
     setAjoutesIA((prev) => new Set(prev).add(index));
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col lg:flex-row h-full min-h-0 overflow-hidden">
+    <div className="flex h-full min-h-0 overflow-hidden">
 
-      {/* ══ Panneau gauche : Chat IA ════════════════════════════════════════ */}
-      <div className="flex flex-col w-full lg:w-[60%] min-h-0 border-r border-gray-100 flex-shrink-0">
+      {/* ══ Sidebar conversations ════════════════════════════════════════════ */}
+      <div className={`flex flex-col flex-shrink-0 border-r border-gray-100 bg-white transition-all duration-200 ${sidebarOpen ? 'w-52' : 'w-10'}`}>
+
+        {/* Toggle + Nouvelle conv */}
+        <div className={`flex items-center border-b border-gray-100 px-2 py-2.5 gap-1 ${sidebarOpen ? 'justify-between' : 'justify-center'}`}>
+          {sidebarOpen && (
+            <button
+              onClick={nouvelleConversation}
+              className="flex items-center gap-1.5 text-xs text-indigo-600 hover:bg-indigo-50 px-2 py-1.5 rounded-lg font-medium transition-colors flex-1"
+              title="Nouvelle conversation"
+            >
+              <MessageSquarePlus className="w-3.5 h-3.5 flex-shrink-0" />
+              Nouveau chat
+            </button>
+          )}
+          <button
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors flex-shrink-0"
+            title={sidebarOpen ? 'Réduire' : 'Ouvrir les conversations'}
+          >
+            {sidebarOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
+        </div>
+
+        {!sidebarOpen && (
+          <button
+            onClick={nouvelleConversation}
+            className="flex items-center justify-center p-2.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+            title="Nouvelle conversation"
+          >
+            <MessageSquarePlus className="w-4 h-4" />
+          </button>
+        )}
+
+        {/* Liste des conversations */}
+        {sidebarOpen && (
+          <div className="flex-1 overflow-y-auto py-2">
+            {conversations.length === 0 && (
+              <p className="text-xs text-gray-300 text-center px-3 py-6 leading-relaxed">
+                Vos conversations apparaîtront ici
+              </p>
+            )}
+            {conversations.map((conv) => (
+              <div
+                key={conv.id}
+                className={`group relative flex items-center px-2 py-1.5 mx-1 rounded-lg cursor-pointer transition-colors ${
+                  currentConvId === conv.id
+                    ? 'bg-indigo-50 text-indigo-700'
+                    : 'hover:bg-gray-50 text-gray-600'
+                }`}
+                onClick={() => ouvrirConversation(conv.id)}
+              >
+                <MessagesSquare className={`w-3.5 h-3.5 flex-shrink-0 mr-2 ${currentConvId === conv.id ? 'text-indigo-500' : 'text-gray-300'}`} />
+                <span className="text-xs truncate flex-1 leading-snug pr-1">{conv.titre}</span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); supprimerConversation(conv.id); }}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-300 hover:text-red-400 transition-all flex-shrink-0"
+                  title="Supprimer"
+                  disabled={deletingId === conv.id}
+                >
+                  {deletingId === conv.id
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <Trash2 className="w-3 h-3" />}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ══ Panneau chat ════════════════════════════════════════════════════ */}
+      <div className="flex flex-col flex-1 min-w-0 min-h-0 border-r border-gray-100">
 
         {/* En-tête */}
         <div className="flex-shrink-0 px-5 py-3.5 border-b border-gray-100 bg-white">
@@ -381,12 +552,12 @@ export default function RecherchePage() {
             <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0">
               <Sparkles className="w-4 h-4 text-white" />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-semibold text-gray-900">Agent IA de MaThèse</p>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-gray-400 truncate">
                 {biblioExistante.length > 0
-                  ? `Accès à votre bibliothèque · ${biblioExistante.length} référence${biblioExistante.length > 1 ? 's' : ''} · Recherche CrossRef intégrée`
-                  : 'Posez vos questions · Recherche d\'articles automatique'}
+                  ? `${biblioExistante.length} référence${biblioExistante.length > 1 ? 's' : ''} · Recherche CrossRef intégrée`
+                  : 'Recherche d\'articles automatique'}
               </p>
             </div>
           </div>
@@ -401,20 +572,17 @@ export default function RecherchePage() {
               </div>
               <p className="text-sm font-medium text-gray-700 mb-0.5">Agent IA de MaThèse</p>
               <p className="text-xs text-gray-400 max-w-xs leading-relaxed mb-5">
-                Votre assistant a accès à votre bibliothèque et peut rechercher automatiquement des articles sur CrossRef.
+                Posez une question ou demandez une recherche. L&apos;historique de vos conversations est sauvegardé.
               </p>
               <div className="flex flex-col gap-2 w-full max-w-sm">
                 {[
-                  'Trouve-moi des articles sur les inégalités scolaires et le milieu socio-économique',
-                  'Quelles références de ma bibliothèque sont liées à ma problématique ?',
+                  'Trouve-moi des articles sur les inégalités scolaires',
+                  'Quelles références sont liées à ma problématique ?',
+                  'Rédige une synthèse sur la résilience scolaire avec citations APA',
                   'Comment structurer ma revue de littérature ?',
-                  'Recherche des articles sur le changement climatique et l\'adaptation urbaine',
                 ].map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setInput(s)}
-                    className="text-left text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-2.5 rounded-xl transition-colors border border-indigo-100"
-                  >
+                  <button key={s} onClick={() => setInput(s)}
+                    className="text-left text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-2.5 rounded-xl transition-colors border border-indigo-100">
                     {s}
                   </button>
                 ))}
@@ -424,6 +592,7 @@ export default function RecherchePage() {
 
           {messages.map((msg, i) => (
             <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} gap-1`}>
+
               {msg.role === 'assistant' && (
                 <div className="flex items-center gap-1.5 px-1">
                   <div className="w-5 h-5 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-md flex items-center justify-center flex-shrink-0">
@@ -432,29 +601,49 @@ export default function RecherchePage() {
                   <span className="text-xs font-medium text-gray-500">Agent IA</span>
                 </div>
               )}
-              <div className={`flex items-end gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} w-full`}>
-                <div
-                  className={`rounded-2xl text-sm ${
-                    msg.role === 'user'
-                      ? 'max-w-[80%] bg-gradient-to-br from-indigo-600 to-violet-600 text-white px-4 py-2.5 rounded-br-sm shadow-sm'
-                      : 'w-full bg-white border border-gray-200 px-5 py-4 rounded-bl-sm shadow-sm'
-                  }`}
-                >
+
+              <div className={`flex items-start gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} w-full`}>
+
+                {/* ── Bulle message ── */}
+                <div className={`rounded-2xl text-sm ${
+                  msg.role === 'user'
+                    ? 'max-w-[80%] bg-gradient-to-br from-indigo-600 to-violet-600 text-white px-4 py-2.5 rounded-br-sm shadow-sm'
+                    : 'w-full bg-white border border-gray-200 px-5 py-4 rounded-bl-sm shadow-sm'
+                }`}>
                   {msg.role === 'user' ? (
-                    <span className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</span>
+                    editingIndex === i ? (
+                      /* Mode édition */
+                      <div className="flex flex-col gap-2">
+                        <textarea
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); soumettreEdition(); } }}
+                          rows={3}
+                          className="w-full bg-white/20 text-white placeholder-white/60 border border-white/30 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-white/50"
+                          autoFocus
+                        />
+                        <div className="flex gap-2 justify-end">
+                          <button onClick={() => setEditingIndex(null)}
+                            className="flex items-center gap-1 text-xs text-white/70 hover:text-white px-2 py-1 rounded-md transition-colors">
+                            <X className="w-3 h-3" /> Annuler
+                          </button>
+                          <button onClick={soumettreEdition}
+                            className="flex items-center gap-1 text-xs bg-white text-indigo-700 font-medium px-3 py-1 rounded-md hover:bg-indigo-50 transition-colors">
+                            <Send className="w-3 h-3" /> Envoyer
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</span>
+                    )
                   ) : msg.content ? (
                     <>
                       <MarkdownMessage content={msg.content} />
                       {msg.proposeWord && (
                         <div className="mt-3 pt-3 border-t border-gray-100">
-                          <button
-                            onClick={() => exporterWord(msg.content, i)}
-                            disabled={exportingWord === i}
-                            className="flex items-center gap-2 text-xs text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 px-4 py-2 rounded-xl font-medium transition-colors shadow-sm"
-                          >
-                            {exportingWord === i
-                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              : <FileDown className="w-3.5 h-3.5" />}
+                          <button onClick={() => exporterWord(msg.content, i)} disabled={exportingWord === i}
+                            className="flex items-center gap-2 text-xs text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 px-4 py-2 rounded-xl font-medium transition-colors shadow-sm">
+                            {exportingWord === i ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
                             {exportingWord === i ? 'Génération...' : 'Télécharger en Word (.docx)'}
                           </button>
                         </div>
@@ -467,21 +656,25 @@ export default function RecherchePage() {
                     </span>
                   )}
                 </div>
-                {msg.role === 'assistant' && msg.content && (
-                  <div className="flex flex-col gap-1 mb-1 flex-shrink-0">
+
+                {/* ── Actions à côté de la bulle ── */}
+                <div className="flex flex-col gap-1 flex-shrink-0 mt-1">
+                  {msg.role === 'user' && editingIndex !== i && (
+                    <button onClick={() => commencerEdition(i)}
+                      className="p-1.5 text-gray-300 hover:text-indigo-500 transition-colors"
+                      title="Modifier ce message">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {msg.role === 'assistant' && msg.content && (
                     <button
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(msg.content);
-                        setCopiedId(i);
-                        setTimeout(() => setCopiedId(null), 2000);
-                      }}
+                      onClick={async () => { await navigator.clipboard.writeText(msg.content); setCopiedId(i); setTimeout(() => setCopiedId(null), 2000); }}
                       className="p-1.5 text-gray-300 hover:text-gray-500 transition-colors"
-                      title="Copier la réponse"
-                    >
+                      title="Copier la réponse">
                       {copiedId === i ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -494,90 +687,56 @@ export default function RecherchePage() {
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); envoyerMessage(); }
-              }}
-              placeholder="Votre question ou demande de recherche... (Entrée pour envoyer, Maj+Entrée pour sauter une ligne)"
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); envoyerMessage(); } }}
+              placeholder="Votre question ou demande de recherche..."
               disabled={chatLoading}
               rows={2}
               className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 resize-none leading-relaxed"
             />
-            <button
-              onClick={envoyerMessage}
-              disabled={!input.trim() || chatLoading}
-              className="flex items-center justify-center w-10 h-10 self-end bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors flex-shrink-0"
-            >
-              {chatLoading
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Send className="w-4 h-4" />
-              }
+            <button onClick={() => envoyerMessage()} disabled={!input.trim() || chatLoading}
+              className="flex items-center justify-center w-10 h-10 self-end bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors flex-shrink-0">
+              {chatLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </button>
           </div>
           <p className="text-xs text-gray-300 mt-1.5 px-1">Maj+Entrée pour sauter une ligne</p>
         </div>
       </div>
 
-      {/* ══ Panneau droit : Documents & Recherches ══════════════════════════ */}
-      <div className="flex flex-col flex-1 min-h-0">
-
-        {/* En-tête */}
+      {/* ══ Panneau droit : Documents ════════════════════════════════════════ */}
+      <div className="hidden lg:flex flex-col w-72 flex-shrink-0 min-h-0">
         <div className="flex-shrink-0 px-5 py-3.5 border-b border-gray-100 bg-white">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 bg-blue-50 rounded-lg flex items-center justify-center">
               <FileSearch className="w-4 h-4 text-blue-600" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-gray-900">Documents & Recherches</p>
+              <p className="text-sm font-semibold text-gray-900">Documents trouvés</p>
               <p className="text-xs text-gray-400">
                 {articlesIA.length > 0
-                  ? `${articlesIA.length} article${articlesIA.length > 1 ? 's' : ''} trouvé${articlesIA.length > 1 ? 's' : ''} par l'Agent IA`
-                  : 'Résultats de recherche de l\'Agent IA'}
+                  ? `${articlesIA.length} article${articlesIA.length > 1 ? 's' : ''}`
+                  : 'Via Agent IA · CrossRef'}
               </p>
             </div>
           </div>
         </div>
 
-        {/* Corps */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0">
-
-          {articlesIA.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-center py-12 px-4">
-              <div className="w-14 h-14 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-center mb-4">
-                <BookOpen className="w-7 h-7 text-gray-300" />
-              </div>
-              <p className="text-sm font-medium text-gray-500 mb-1">
-                Les recherches effectuées par l&apos;Agent IA apparaîtront ici
+        <div className="flex-1 overflow-y-auto px-4 py-4 min-h-0">
+          {articlesIA.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center py-8 px-2">
+              <BookOpen className="w-8 h-8 text-gray-200 mb-3" />
+              <p className="text-xs text-gray-400 leading-relaxed">
+                Demandez à l&apos;Agent IA de trouver des articles — il interrogera CrossRef automatiquement.
               </p>
-              <p className="text-xs text-gray-300 max-w-xs leading-relaxed">
-                Demandez à l&apos;Agent IA de trouver des articles sur un sujet — il interrogera CrossRef automatiquement.
-              </p>
-              <div className="mt-6 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 max-w-xs">
-                <p className="text-xs text-indigo-600 font-medium mb-1">Exemple</p>
-                <p className="text-xs text-indigo-500 italic">
-                  &ldquo;Trouve-moi des articles sur la méthodologie qualitative en sciences de l&apos;éducation&rdquo;
-                </p>
-              </div>
             </div>
-          )}
-
-          {articlesIA.length > 0 && (
+          ) : (
             <div className="space-y-3">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs text-gray-400 font-medium">
-                  Source : CrossRef · {articlesIA.length} résultat{articlesIA.length > 1 ? 's' : ''}
-                </p>
-                <span className="text-xs bg-indigo-50 text-indigo-600 px-2.5 py-0.5 rounded-full font-medium border border-indigo-100">
-                  Via Agent IA
-                </span>
-              </div>
-
+              <p className="text-xs text-gray-400 font-medium">
+                Source CrossRef · {articlesIA.length} résultat{articlesIA.length > 1 ? 's' : ''}
+              </p>
               {articlesIA.map((article, idx) => (
-                <ArticleCardIA
-                  key={idx}
-                  article={article}
+                <ArticleCardIA key={idx} article={article}
                   ajoute={ajoutesIA.has(idx)}
-                  onAjouter={() => ajouterArticleIA(article, idx)}
-                />
+                  onAjouter={() => ajouterArticleIA(article, idx)} />
               ))}
             </div>
           )}
@@ -589,11 +748,7 @@ export default function RecherchePage() {
 
 // ─── Carte article CrossRef ───────────────────────────────────────────────────
 
-function ArticleCardIA({
-  article,
-  ajoute,
-  onAjouter,
-}: {
+function ArticleCardIA({ article, ajoute, onAjouter }: {
   article: ArticleCrossRef;
   ajoute: boolean;
   onAjouter: () => void;
@@ -602,70 +757,40 @@ function ArticleCardIA({
 
   return (
     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-      <div className="px-4 py-3">
-        <div className="flex items-start gap-2">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-900 leading-snug">{article.titre}</p>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              {article.auteurs && (
-                <span className="text-xs text-gray-400">{article.auteurs}</span>
-              )}
-              {article.annee && (
-                <span className="text-xs text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{article.annee}</span>
-              )}
-              {article.type && (
-                <span className="text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded capitalize">{article.type}</span>
-              )}
-            </div>
-          </div>
+      <div className="px-3 py-3">
+        <p className="text-xs font-medium text-gray-900 leading-snug">{article.titre}</p>
+        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+          {article.auteurs && <span className="text-xs text-gray-400 truncate max-w-full">{article.auteurs}</span>}
+          {article.annee && <span className="text-xs text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{article.annee}</span>}
         </div>
-
-        <div className="flex items-center gap-2 mt-3">
+        <div className="flex items-center gap-1.5 mt-2 flex-wrap">
           {ajoute ? (
-            <span className="flex items-center gap-1.5 text-xs text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg font-medium">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Ajouté à la bibliothèque
+            <span className="flex items-center gap-1 text-xs text-green-700 bg-green-50 px-2 py-1 rounded-lg font-medium">
+              <CheckCircle2 className="w-3 h-3" /> Ajouté
             </span>
           ) : (
-            <button
-              onClick={onAjouter}
-              className="flex items-center gap-1.5 text-xs text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg font-medium transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Ajouter à ma bibliothèque
+            <button onClick={onAjouter}
+              className="flex items-center gap-1 text-xs text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-1 rounded-lg font-medium transition-colors">
+              <Plus className="w-3 h-3" /> Ajouter
             </button>
           )}
-
           {(article.doi || article.url) && (
-            <a
-              href={article.url ?? `https://doi.org/${article.doi}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-600 px-2 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              Voir
+            <a href={article.url ?? `https://doi.org/${article.doi}`} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-600 px-1.5 py-1 rounded-lg hover:bg-gray-50 transition-colors">
+              <ExternalLink className="w-3 h-3" /> Voir
             </a>
           )}
-
           {article.abstract && (
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1.5 rounded-lg hover:bg-gray-50 transition-colors ml-auto"
-            >
-              {expanded ? 'Masquer résumé' : 'Voir résumé'}
+            <button onClick={() => setExpanded(!expanded)}
+              className="text-xs text-gray-400 hover:text-gray-600 ml-auto">
+              {expanded ? '▲' : '▼'}
             </button>
           )}
         </div>
       </div>
-
       {expanded && article.abstract && (
-        <div className="border-t border-gray-50 px-4 py-3 bg-gray-50/50">
-          <p className="text-xs font-semibold text-gray-500 mb-1">Résumé</p>
-          <p className="text-xs text-gray-600 leading-relaxed">{article.abstract}</p>
-          {article.doi && (
-            <p className="text-xs text-gray-300 mt-2">DOI : {article.doi}</p>
-          )}
+        <div className="border-t border-gray-50 px-3 py-2 bg-gray-50/50">
+          <p className="text-xs text-gray-500 leading-relaxed">{article.abstract}</p>
         </div>
       )}
     </div>
