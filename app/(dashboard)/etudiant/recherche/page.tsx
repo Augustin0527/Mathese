@@ -33,6 +33,7 @@ interface ArticleCrossRef {
   url: string | null;
   abstract: string | null;
   type: string | null;
+  source?: string;
 }
 
 interface ChatMessage {
@@ -959,6 +960,13 @@ function ArticleCardIA({ article, ajoute, onAjouter }: {
         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
           {article.auteurs && <span className="text-xs text-gray-400 truncate max-w-full">{article.auteurs}</span>}
           {article.annee && <span className="text-xs text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{article.annee}</span>}
+          {article.source && (
+            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+              article.source === 'Semantic Scholar' ? 'bg-blue-50 text-blue-600' :
+              article.source === 'OpenAlex' ? 'bg-emerald-50 text-emerald-600' :
+              'bg-gray-50 text-gray-500'
+            }`}>{article.source}</span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 mt-2 flex-wrap">
           {ajoute ? (

@@ -14,11 +14,33 @@ interface ArticleBiblio {
   notes?: string;
 }
 
-interface CrossRefAuthor {
-  given?: string;
-  family?: string;
+interface ArticleResult {
+  titre: string;
+  auteurs: string;
+  annee: string;
+  doi: string | null;
+  url: string | null;
+  abstract: string | null;
+  type: string | null;
+  source: string;
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Exclut les titres qui sont en réalité des légendes de tableau/figure */
+function isTitleFigureOrTable(titre: string): boolean {
+  return /^(table|figure|fig\.|tab\.|appendix|annexe|supplement)/i.test(titre.trim());
+}
+
+/** Types CrossRef acceptables (articles, chapitres, préprints, rapports) */
+const VALID_TYPES = new Set([
+  'journal-article', 'proceedings-article', 'book-chapter', 'book',
+  'monograph', 'report', 'dissertation', 'posted-content', 'preprint',
+]);
+
+// ─── CrossRef ────────────────────────────────────────────────────────────────
+
+interface CrossRefAuthor { given?: string; family?: string }
 interface CrossRefWork {
   title?: string[];
   author?: CrossRefAuthor[];
@@ -28,25 +50,10 @@ interface CrossRefWork {
   abstract?: string;
   type?: string;
 }
+interface CrossRefResponse { message?: { items?: CrossRefWork[] } }
 
-interface CrossRefResponse {
-  message?: { items?: CrossRefWork[] };
-}
-
-interface ArticleCrossRef {
-  titre: string;
-  auteurs: string;
-  annee: string;
-  doi: string | null;
-  url: string | null;
-  abstract: string | null;
-  type: string | null;
-}
-
-// ─── Appel CrossRef ───────────────────────────────────────────────────────────
-
-async function rechercherCrossRef(query: string, nb = 5): Promise<ArticleCrossRef[]> {
-  const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&rows=${Math.min(nb, 8)}&select=title,author,published,DOI,URL,abstract,type`;
+async function rechercherCrossRef(query: string, nb = 6): Promise<ArticleResult[]> {
+  const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&rows=${Math.min(nb, 10)}&select=title,author,published,DOI,URL,abstract,type`;
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'MaThese/1.0 (contact@mathese.org)' },
@@ -54,21 +61,131 @@ async function rechercherCrossRef(query: string, nb = 5): Promise<ArticleCrossRe
     });
     if (!res.ok) return [];
     const data: CrossRefResponse = await res.json();
-    return (data?.message?.items ?? []).map((item: CrossRefWork) => {
-      const titre = item.title?.[0] ?? 'Sans titre';
-      const auteurs = (item.author ?? []).slice(0, 4)
-        .map((a) => [a.given, a.family].filter(Boolean).join(' ')).join(', ')
-        + ((item.author ?? []).length > 4 ? ' et al.' : '');
-      const annee = String(item.published?.['date-parts']?.[0]?.[0] ?? '');
-      const doi = item.DOI ?? null;
-      const articleUrl = item.URL ?? (doi ? `https://doi.org/${doi}` : null);
-      const abstract = item.abstract
-        ? item.abstract.replace(/<[^>]+>/g, '').slice(0, 400) : null;
-      return { titre, auteurs, annee, doi, url: articleUrl, abstract, type: item.type ?? null };
-    });
+    return (data?.message?.items ?? [])
+      .filter((item) => {
+        if (!item.title?.[0]) return false;
+        if (item.type && !VALID_TYPES.has(item.type)) return false;
+        if (isTitleFigureOrTable(item.title[0])) return false;
+        return true;
+      })
+      .map((item) => {
+        const titre = item.title![0];
+        const auteurs = (item.author ?? []).slice(0, 4)
+          .map((a) => [a.given, a.family].filter(Boolean).join(' ')).join(', ')
+          + ((item.author ?? []).length > 4 ? ' et al.' : '');
+        const annee = String(item.published?.['date-parts']?.[0]?.[0] ?? '');
+        const doi = item.DOI ?? null;
+        const articleUrl = item.URL ?? (doi ? `https://doi.org/${doi}` : null);
+        const abstract = item.abstract
+          ? item.abstract.replace(/<[^>]+>/g, '').slice(0, 400) : null;
+        return { titre, auteurs, annee, doi, url: articleUrl, abstract, type: item.type ?? null, source: 'CrossRef' };
+      });
   } catch {
     return [];
   }
+}
+
+// ─── Semantic Scholar ─────────────────────────────────────────────────────────
+
+interface S2Paper {
+  title?: string;
+  authors?: { name: string }[];
+  year?: number | null;
+  externalIds?: { DOI?: string };
+  abstract?: string | null;
+  openAccessPdf?: { url: string } | null;
+}
+
+async function rechercherSemanticScholar(query: string, nb = 6): Promise<ArticleResult[]> {
+  const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&fields=title,authors,year,externalIds,abstract,openAccessPdf&limit=${Math.min(nb, 10)}`;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'MaThese/1.0 (contact@mathese.org)' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data?.data ?? [])
+      .filter((p: S2Paper) => p.title && !isTitleFigureOrTable(p.title))
+      .map((p: S2Paper) => {
+        const auteurs = (p.authors ?? []).slice(0, 4).map((a) => a.name).join(', ')
+          + ((p.authors ?? []).length > 4 ? ' et al.' : '');
+        const doi = p.externalIds?.DOI ?? null;
+        const articleUrl = p.openAccessPdf?.url ?? (doi ? `https://doi.org/${doi}` : null);
+        const abstract = p.abstract ? p.abstract.slice(0, 400) : null;
+        return { titre: p.title!, auteurs, annee: String(p.year ?? ''), doi, url: articleUrl, abstract, type: 'journal-article', source: 'Semantic Scholar' };
+      });
+  } catch {
+    return [];
+  }
+}
+
+// ─── OpenAlex ────────────────────────────────────────────────────────────────
+
+interface OpenAlexWork {
+  title?: string;
+  authorships?: { author: { display_name: string } }[];
+  publication_year?: number | null;
+  doi?: string | null;
+  open_access?: { oa_url?: string | null };
+  abstract_inverted_index?: Record<string, number[]> | null;
+}
+
+function reconstructAbstract(inv: Record<string, number[]>): string {
+  const positions: [number, string][] = [];
+  for (const [word, pos] of Object.entries(inv)) {
+    for (const p of pos) positions.push([p, word]);
+  }
+  positions.sort((a, b) => a[0] - b[0]);
+  return positions.map(([, w]) => w).join(' ').slice(0, 400);
+}
+
+async function rechercherOpenAlex(query: string, nb = 6): Promise<ArticleResult[]> {
+  const url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&filter=type:article&per-page=${Math.min(nb, 10)}&select=title,authorships,publication_year,doi,open_access,abstract_inverted_index`;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'MaThese/1.0 (contact@mathese.org)' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data?.results ?? [])
+      .filter((w: OpenAlexWork) => w.title && !isTitleFigureOrTable(w.title))
+      .map((w: OpenAlexWork) => {
+        const auteurs = (w.authorships ?? []).slice(0, 4).map((a) => a.author.display_name).join(', ')
+          + ((w.authorships ?? []).length > 4 ? ' et al.' : '');
+        const doi = w.doi ? w.doi.replace('https://doi.org/', '') : null;
+        const articleUrl = w.open_access?.oa_url ?? (doi ? `https://doi.org/${doi}` : null);
+        const abstract = w.abstract_inverted_index ? reconstructAbstract(w.abstract_inverted_index) : null;
+        return { titre: w.title!, auteurs, annee: String(w.publication_year ?? ''), doi, url: articleUrl, abstract, type: 'journal-article', source: 'OpenAlex' };
+      });
+  } catch {
+    return [];
+  }
+}
+
+// ─── Fusion + dédoublonnage ───────────────────────────────────────────────────
+
+async function rechercherArticles(query: string, nb = 6): Promise<ArticleResult[]> {
+  const perSource = Math.min(Math.ceil(nb / 2) + 2, 8);
+  const [crossref, semantic, openalex] = await Promise.all([
+    rechercherCrossRef(query, perSource),
+    rechercherSemanticScholar(query, perSource),
+    rechercherOpenAlex(query, perSource),
+  ]);
+
+  const seen = new Set<string>();
+  const results: ArticleResult[] = [];
+  for (const article of [...crossref, ...semantic, ...openalex]) {
+    const key = article.doi
+      ? article.doi.toLowerCase()
+      : article.titre.toLowerCase().replace(/\s+/g, ' ').slice(0, 60);
+    if (!seen.has(key)) {
+      seen.add(key);
+      results.push(article);
+    }
+  }
+  return results.slice(0, nb);
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -121,12 +238,12 @@ Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères p
   const tools: Anthropic.Tool[] = [
     {
       name: 'rechercher_articles',
-      description: "Recherche des articles académiques sur CrossRef. À utiliser quand l'étudiant demande des articles, références ou littérature.",
+      description: "Recherche des articles académiques sur CrossRef, Semantic Scholar et OpenAlex en parallèle. À utiliser quand l'étudiant demande des articles, références ou littérature.",
       input_schema: {
         type: 'object' as const,
         properties: {
           query: { type: 'string', description: 'Mots-clés en anglais de préférence' },
-          nb: { type: 'number', description: 'Nombre de résultats (max 8)' },
+          nb: { type: 'number', description: 'Nombre de résultats souhaités (max 12)' },
         },
         required: ['query'],
       },
@@ -149,9 +266,6 @@ Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères p
     async start(controller) {
       const encode = (text: string) => controller.enqueue(new TextEncoder().encode(text));
 
-      // Nettoyer les messages : supprimer tous les champs personnalisés du frontend
-      // (proposeWord, isError, retryFromMessages, etc.) qui corrompent la requête API
-      // et exclure les messages d'erreur qui ne sont pas de vraies réponses IA
       const cleanMessages: Anthropic.MessageParam[] = (
         messages as Array<{ role: string; content: string; isError?: boolean }>
       )
@@ -159,7 +273,7 @@ Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères p
         .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
       let currentMessages: Anthropic.MessageParam[] = cleanMessages;
-      let foundArticles: ArticleCrossRef[] = [];
+      let foundArticles: ArticleResult[] = [];
 
       try {
         // eslint-disable-next-line no-constant-condition
@@ -168,7 +282,6 @@ Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères p
           const toolUses: { id: string; name: string; input: Record<string, unknown> }[] = [];
           let stopReason: string | null = null;
 
-          // Variables pour reconstruire les blocs sans finalMessage()
           let currentToolId = '';
           let currentToolName = '';
           let currentToolInput = '';
@@ -214,57 +327,41 @@ Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères p
             }
           }
 
-          // ── Reconstruire les content blocks sans appeler finalMessage() ──
-          // Cela évite de doubler le temps d'attente
           const contentBlocks: Anthropic.MessageParam['content'] = [];
-          if (finalText) {
-            contentBlocks.push({ type: 'text', text: finalText });
-          }
+          if (finalText) contentBlocks.push({ type: 'text', text: finalText });
           for (const tu of toolUses) {
-            contentBlocks.push({
-              type: 'tool_use',
-              id: tu.id,
-              name: tu.name,
-              input: tu.input,
-            });
+            contentBlocks.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
           }
 
-          // Fin si pas d'outil à exécuter
           if (stopReason !== 'tool_use' || toolUses.length === 0) break;
 
-          // ── Exécuter les outils ──────────────────────────────────────────
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
           for (const toolUse of toolUses) {
             if (toolUse.name === 'rechercher_articles') {
               const query = String(toolUse.input.query ?? '');
-              const nb = typeof toolUse.input.nb === 'number' ? toolUse.input.nb : 5;
+              const nb = typeof toolUse.input.nb === 'number' ? toolUse.input.nb : 6;
 
-              encode(`\n__STATUS__Recherche CrossRef : "${query}"...__STATUS_END__\n`);
+              encode(`\n__STATUS__Recherche dans CrossRef, Semantic Scholar et OpenAlex : "${query}"...__STATUS_END__\n`);
 
-              const articles = await rechercherCrossRef(query, nb);
+              const articles = await rechercherArticles(query, nb);
               foundArticles = [...foundArticles, ...articles];
 
               const resultText = articles.length > 0
                 ? articles.map((a, i) =>
-                    `[${i + 1}] **${a.titre}**\n` +
+                    `[${i + 1}] **${a.titre}** (${a.source})\n` +
                     `   Auteurs : ${a.auteurs || 'Inconnu'} · Année : ${a.annee || '?'}\n` +
                     (a.doi ? `   DOI : ${a.doi}\n` : '') +
                     (a.abstract ? `   Résumé : ${a.abstract}\n` : '')
                   ).join('\n')
                 : 'Aucun article trouvé pour cette requête.';
 
-              toolResults.push({
-                type: 'tool_result',
-                tool_use_id: toolUse.id,
-                content: resultText,
-              });
+              toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: resultText });
 
             } else if (toolUse.name === 'generer_document_word') {
               const titre = String(toolUse.input.titre ?? 'Document');
               const contenu = String(toolUse.input.contenu ?? '');
 
-              // Transmettre le contenu au client via un signal spécial
               encode(`\n__WORD_DOC__${JSON.stringify({ titre, contenu })}__WORD_DOC_END__\n`);
 
               toolResults.push({
