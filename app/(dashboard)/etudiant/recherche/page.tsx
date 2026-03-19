@@ -1,30 +1,16 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  Search, Send, Loader2, Sparkles, BookOpen, ExternalLink,
-  Plus, CheckCircle2, ChevronDown, ChevronUp, LibraryBig, AlertCircle, Copy, Check,
+  Send, Loader2, Sparkles, BookOpen, ExternalLink,
+  Plus, CheckCircle2, Copy, Check, FileSearch,
 } from 'lucide-react';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface ArticleResultat {
-  id: string;
-  titre: string;
-  auteurs: string;
-  annee: string;
-  citationCount: number;
-  doi: string | null;
-  urlPdf: string | null;
-  priorite: 'haute' | 'moyenne' | 'basse';
-  resume: string;
-  apport: string;
-  dejaDisponible: boolean;
-}
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ArticleBiblio {
   id: string;
@@ -36,23 +22,27 @@ interface ArticleBiblio {
   notes?: string;
 }
 
+interface ArticleCrossRef {
+  titre: string;
+  auteurs: string;
+  annee: string;
+  doi: string | null;
+  url: string | null;
+  abstract: string | null;
+  type: string | null;
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
 }
 
-const PRIORITE_CONFIG = {
-  haute:   { label: 'Haute',   color: 'text-green-700',  bg: 'bg-green-50',  border: 'border-green-200',  dot: 'bg-green-500' },
-  moyenne: { label: 'Moyenne', color: 'text-orange-700', bg: 'bg-orange-50', border: 'border-orange-200', dot: 'bg-orange-400' },
-  basse:   { label: 'Basse',   color: 'text-gray-600',   bg: 'bg-gray-50',   border: 'border-gray-200',   dot: 'bg-gray-400'  },
-};
-
-// ─── Page principale ─────────────────────────────────────────────────────────
+// ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function RecherchePage() {
   const { user, profile } = useAuth();
 
-  // ── Bibliothèque existante de l'étudiant ──
+  // ── Bibliothèque existante ──
   const [biblioExistante, setBiblioExistante] = useState<ArticleBiblio[]>([]);
 
   // ── Chat ──
@@ -63,18 +53,11 @@ export default function RecherchePage() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // ── Recherche d'articles ──
-  const [sujet, setSujet] = useState('');
-  const [rechercheLoading, setRechercheLoading] = useState(false);
-  const [articles, setArticles] = useState<ArticleResultat[]>([]);
-  const [synthese, setSynthese] = useState('');
-  const [erreurRecherche, setErreurRecherche] = useState('');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [ajoutes, setAjoutes] = useState<Set<string>>(new Set());
-  const [ajoutTousLoading, setAjoutTousLoading] = useState(false);
-  const [tableVisible, setTableVisible] = useState(true);
+  // ── Résultats de recherche IA ──
+  const [articlesIA, setArticlesIA] = useState<ArticleCrossRef[]>([]);
+  const [ajoutesIA, setAjoutesIA] = useState<Set<number>>(new Set());
 
-  // Charger la bibliothèque existante depuis Supabase
+  // Charger la bibliothèque existante
   useEffect(() => {
     if (!user) return;
     supabase
@@ -90,20 +73,7 @@ export default function RecherchePage() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // ── Vérifier si un article est dans la bibliothèque (comparaison de titre) ──
-  const estDansBiblio = useCallback((titre: string): boolean => {
-    const t = titre.toLowerCase().trim();
-    return biblioExistante.some((a) => {
-      const existing = a.titre.toLowerCase().trim();
-      // Correspondance si >70% des mots clés sont communs
-      const mots = t.split(/\s+/).filter((m) => m.length > 4);
-      if (!mots.length) return existing.includes(t.slice(0, 20));
-      const matches = mots.filter((m) => existing.includes(m));
-      return matches.length / mots.length > 0.6;
-    });
-  }, [biblioExistante]);
-
-  // ── Envoi d'un message chat ──────────────────────────────────────────────
+  // ── Envoi d'un message ────────────────────────────────────────────────────
   async function envoyerMessage() {
     if (!input.trim() || chatLoading) return;
 
@@ -135,24 +105,53 @@ export default function RecherchePage() {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let text = '';
+      let fullText = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        text += decoder.decode(value, { stream: true });
+        fullText += decoder.decode(value, { stream: true });
+
+        // Extraire le texte visible (avant __SEARCH_RESULTS__)
+        const separatorIdx = fullText.indexOf('\n\n__SEARCH_RESULTS__');
+        const visibleText = separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText;
+
         setMessages((prev) => {
           const updated = [...prev];
-          updated[updated.length - 1] = { role: 'assistant', content: text };
+          updated[updated.length - 1] = { role: 'assistant', content: visibleText };
           return updated;
         });
       }
+
+      // Après la réception complète : extraire les articles de recherche
+      const separatorIdx = fullText.indexOf('\n\n__SEARCH_RESULTS__');
+      if (separatorIdx >= 0) {
+        const jsonStr = fullText.slice(separatorIdx + '\n\n__SEARCH_RESULTS__'.length);
+        try {
+          const articles: ArticleCrossRef[] = JSON.parse(jsonStr);
+          if (articles.length > 0) {
+            setArticlesIA(articles);
+            setAjoutesIA(new Set());
+          }
+        } catch {
+          // JSON mal formé : on ignore
+        }
+      }
+
+      // S'assurer que le texte final affiché est propre
+      const visibleFinal = separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText;
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = { role: 'assistant', content: visibleFinal };
+        return updated;
+      });
+
     } catch (err: unknown) {
       if ((err as Error).name === 'AbortError') return;
       setMessages((prev) => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
-        const errorMsg = { role: 'assistant' as const, content: 'Erreur de connexion. Réessayez.' };
+        const errorMsg: ChatMessage = { role: 'assistant', content: 'Erreur de connexion. Réessayez.' };
         if (last?.role === 'assistant' && !last.content) updated[updated.length - 1] = errorMsg;
         else updated.push(errorMsg);
         return updated;
@@ -163,86 +162,30 @@ export default function RecherchePage() {
     }
   }
 
-  // ── Recherche d'articles ─────────────────────────────────────────────────
-  async function lancerRecherche() {
-    if (!sujet.trim() || rechercheLoading) return;
-    setRechercheLoading(true);
-    setArticles([]);
-    setSynthese('');
-    setErreurRecherche('');
-    setAjoutes(new Set());
-
-    try {
-      const res = await fetch('/api/recherche/articles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sujet,
-          titresExistants: biblioExistante.map((a) => a.titre),
-        }),
-      });
-
-      if (!res.ok) throw new Error(`Erreur ${res.status}`);
-
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-
-      // Marquer les articles déjà dans la bibliothèque
-      const articlesAvecStatut: ArticleResultat[] = (data.articles ?? []).map((a: ArticleResultat) => ({
-        ...a,
-        dejaDisponible: a.dejaDisponible || estDansBiblio(a.titre),
-      }));
-
-      setArticles(articlesAvecStatut);
-      setSynthese(data.synthese ?? '');
-
-      if (articlesAvecStatut.length === 0 && !data.synthese) {
-        setErreurRecherche('Aucun résultat. Essayez en anglais ou avec des termes plus généraux.');
-      }
-    } catch (err: unknown) {
-      setErreurRecherche((err as Error).message || 'Erreur lors de la recherche.');
-    } finally {
-      setRechercheLoading(false);
-    }
-  }
-
-  // ── Ajouter un article à la bibliothèque ────────────────────────────────
-  async function ajouterArticle(article: ArticleResultat) {
-    if (!user || ajoutes.has(article.id) || article.dejaDisponible) return;
+  // ── Ajouter un article CrossRef à la bibliothèque ────────────────────────
+  async function ajouterArticleIA(article: ArticleCrossRef, index: number) {
+    if (!user || ajoutesIA.has(index)) return;
     await supabase.from('articles').insert({
       user_id: user.id,
       titre: article.titre,
-      auteurs: article.auteurs ? [article.auteurs] : [],
+      auteurs: article.auteurs ? article.auteurs.split(',').map((a) => a.trim()) : [],
       annee: article.annee ? Number(article.annee) : null,
       doi: article.doi ?? '',
-      url: article.urlPdf ?? '',
-      notes: article.apport,
+      url: article.url ?? '',
+      notes: article.abstract ?? '',
       tags: [],
       lu: false,
     });
-    setAjoutes((prev) => new Set(prev).add(article.id));
+    setAjoutesIA((prev) => new Set(prev).add(index));
   }
-
-  // ── Ajouter tous les articles non déjà présents ──────────────────────────
-  async function ajouterTousLesArticles() {
-    if (!user || ajoutTousLoading) return;
-    const aNouveaux = articles.filter((a) => !a.dejaDisponible && !ajoutes.has(a.id));
-    if (!aNouveaux.length) return;
-    setAjoutTousLoading(true);
-    for (const article of aNouveaux) {
-      await ajouterArticle(article);
-    }
-    setAjoutTousLoading(false);
-  }
-
-  const nouveauxArticles = articles.filter((a) => !a.dejaDisponible && !ajoutes.has(a.id));
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col lg:flex-row h-full min-h-0 overflow-hidden">
 
-      {/* ══ Panneau gauche : Chat IA ══════════════════════════════════════════ */}
-      <div className="flex flex-col w-full lg:w-[42%] min-h-0 border-r border-gray-100 flex-shrink-0">
+      {/* ══ Panneau gauche : Chat IA ════════════════════════════════════════ */}
+      <div className="flex flex-col w-full lg:w-[55%] min-h-0 border-r border-gray-100 flex-shrink-0">
+
         {/* En-tête */}
         <div className="flex-shrink-0 px-5 py-3.5 border-b border-gray-100 bg-white">
           <div className="flex items-center gap-2.5">
@@ -253,8 +196,8 @@ export default function RecherchePage() {
               <p className="text-sm font-semibold text-gray-900">Agent IA de MaThèse</p>
               <p className="text-xs text-gray-400">
                 {biblioExistante.length > 0
-                  ? `Accès à votre bibliothèque · ${biblioExistante.length} référence${biblioExistante.length > 1 ? 's' : ''}`
-                  : 'Posez vos questions de recherche'}
+                  ? `Accès à votre bibliothèque · ${biblioExistante.length} référence${biblioExistante.length > 1 ? 's' : ''} · Recherche CrossRef intégrée`
+                  : 'Posez vos questions · Recherche d\'articles automatique'}
               </p>
             </div>
           </div>
@@ -269,13 +212,14 @@ export default function RecherchePage() {
               </div>
               <p className="text-sm font-medium text-gray-700 mb-0.5">Agent IA de MaThèse</p>
               <p className="text-xs text-gray-400 max-w-xs leading-relaxed mb-5">
-                Votre assistant personnel a accès à votre bibliothèque et peut vous recommander des références.
+                Votre assistant a accès à votre bibliothèque et peut rechercher automatiquement des articles sur CrossRef.
               </p>
-              <div className="flex flex-col gap-2 w-full max-w-xs">
+              <div className="flex flex-col gap-2 w-full max-w-sm">
                 {[
+                  'Trouve-moi des articles sur les inégalités scolaires et le milieu socio-économique',
                   'Quelles références de ma bibliothèque sont liées à ma problématique ?',
                   'Comment structurer ma revue de littérature ?',
-                  'Quels cadres théoriques mobiliser pour mon sujet ?',
+                  'Recherche des articles sur le changement climatique et l\'adaptation urbaine',
                 ].map((s) => (
                   <button
                     key={s}
@@ -361,7 +305,7 @@ export default function RecherchePage() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); envoyerMessage(); }
               }}
-              placeholder="Votre question..."
+              placeholder="Votre question ou demande de recherche..."
               disabled={chatLoading}
               className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
             />
@@ -379,218 +323,70 @@ export default function RecherchePage() {
         </div>
       </div>
 
-      {/* ══ Panneau droit : Recherche d'articles ═════════════════════════════ */}
+      {/* ══ Panneau droit : Documents & Recherches ══════════════════════════ */}
       <div className="flex flex-col flex-1 min-h-0">
-        {/* En-tête recherche */}
+
+        {/* En-tête */}
         <div className="flex-shrink-0 px-5 py-3.5 border-b border-gray-100 bg-white">
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 bg-blue-50 rounded-lg flex items-center justify-center">
-              <BookOpen className="w-4 h-4 text-blue-600" />
+              <FileSearch className="w-4 h-4 text-blue-600" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-gray-900">Recherche d&apos;articles</p>
-              <p className="text-xs text-gray-400">Semantic Scholar · Classement IA · L&apos;IA vérifie votre bibliothèque</p>
+              <p className="text-sm font-semibold text-gray-900">Documents & Recherches</p>
+              <p className="text-xs text-gray-400">
+                {articlesIA.length > 0
+                  ? `${articlesIA.length} article${articlesIA.length > 1 ? 's' : ''} trouvé${articlesIA.length > 1 ? 's' : ''} par l'Agent IA`
+                  : 'Résultats de recherche de l\'Agent IA'}
+              </p>
             </div>
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={sujet}
-              onChange={(e) => setSujet(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') lancerRecherche(); }}
-              placeholder="Ex: IMSE inégalités scolaires, climate change adaptation..."
-              className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-            <button
-              onClick={lancerRecherche}
-              disabled={!sujet.trim() || rechercheLoading}
-              className="flex items-center gap-1.5 bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors flex-shrink-0"
-            >
-              {rechercheLoading
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Search className="w-4 h-4" />
-              }
-              {rechercheLoading ? 'Analyse...' : 'Rechercher'}
-            </button>
           </div>
         </div>
 
-        {/* Corps résultats */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-0">
+        {/* Corps */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0">
 
-          {/* Chargement */}
-          {rechercheLoading && (
-            <div className="text-center py-16">
-              <Sparkles className="w-8 h-8 text-indigo-400 animate-pulse mx-auto mb-3" />
-              <p className="text-sm text-gray-600 font-medium">Recherche + analyse IA en cours...</p>
-              <p className="text-xs text-gray-400 mt-1">Comparaison avec votre bibliothèque</p>
+          {/* État vide */}
+          {articlesIA.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full text-center py-12 px-4">
+              <div className="w-14 h-14 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-center mb-4">
+                <BookOpen className="w-7 h-7 text-gray-300" />
+              </div>
+              <p className="text-sm font-medium text-gray-500 mb-1">
+                Les recherches effectuées par l&apos;Agent IA apparaîtront ici
+              </p>
+              <p className="text-xs text-gray-300 max-w-xs leading-relaxed">
+                Demandez à l&apos;Agent IA de trouver des articles sur un sujet — il interrogera CrossRef automatiquement.
+              </p>
+              <div className="mt-6 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 max-w-xs">
+                <p className="text-xs text-indigo-600 font-medium mb-1">Exemple</p>
+                <p className="text-xs text-indigo-500 italic">
+                  &ldquo;Trouve-moi des articles sur la méthodologie qualitative en sciences de l&apos;éducation&rdquo;
+                </p>
+              </div>
             </div>
           )}
 
-          {/* Erreur */}
-          {!rechercheLoading && erreurRecherche && (
-            <div className="flex items-start gap-2 bg-red-50 border border-red-100 px-4 py-3 rounded-xl">
-              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-red-700">{erreurRecherche}</p>
-            </div>
-          )}
-
-          {/* Résultats */}
-          {!rechercheLoading && articles.length > 0 && (
-            <>
-              {/* Barre d'actions globales */}
-              <div className="flex items-center justify-between py-1">
-                <p className="text-xs text-gray-500">
-                  {articles.length} articles · {articles.filter((a) => a.dejaDisponible || ajoutes.has(a.id)).length} déjà dans votre bibliothèque
+          {/* Liste des articles trouvés par l'IA */}
+          {articlesIA.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-gray-400 font-medium">
+                  Source : CrossRef · {articlesIA.length} résultat{articlesIA.length > 1 ? 's' : ''}
                 </p>
-                {nouveauxArticles.length > 0 && (
-                  <button
-                    onClick={ajouterTousLesArticles}
-                    disabled={ajoutTousLoading}
-                    className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
-                  >
-                    {ajoutTousLoading
-                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      : <LibraryBig className="w-3.5 h-3.5" />
-                    }
-                    Tout ajouter ({nouveauxArticles.length})
-                  </button>
-                )}
+                <span className="text-xs bg-indigo-50 text-indigo-600 px-2.5 py-0.5 rounded-full font-medium border border-indigo-100">
+                  Via Agent IA
+                </span>
               </div>
 
-              {/* Cartes par priorité */}
-              {(['haute', 'moyenne', 'basse'] as const).map((prio) => {
-                const group = articles.filter((a) => a.priorite === prio);
-                if (!group.length) return null;
-                const cfg = PRIORITE_CONFIG[prio];
-                return (
-                  <div key={prio}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                        {cfg.label} priorité ({group.length})
-                      </span>
-                    </div>
-                    <div className="space-y-2">
-                      {group.map((article) => (
-                        <ArticleCard
-                          key={article.id}
-                          article={article}
-                          expanded={expandedId === article.id}
-                          onToggle={() => setExpandedId(expandedId === article.id ? null : article.id)}
-                          onAjouter={() => ajouterArticle(article)}
-                          ajoute={ajoutes.has(article.id)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Tableau récapitulatif */}
-              <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
-                <button
-                  onClick={() => setTableVisible(!tableVisible)}
-                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
-                >
-                  <span className="text-sm font-semibold text-gray-900">Tableau récapitulatif</span>
-                  {tableVisible ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
-                </button>
-                {tableVisible && (
-                  <div className="overflow-x-auto border-t border-gray-50">
-                    <table className="w-full text-xs">
-                      <thead className="bg-gray-50 border-b border-gray-100">
-                        <tr>
-                          <th className="text-left px-3 py-2.5 font-semibold text-gray-500">Titre · Auteurs · Année</th>
-                          <th className="text-left px-3 py-2.5 font-semibold text-gray-500 w-24">Priorité</th>
-                          <th className="text-left px-3 py-2.5 font-semibold text-gray-500">Résumé</th>
-                          <th className="text-left px-3 py-2.5 font-semibold text-gray-500">Apport</th>
-                          <th className="px-3 py-2.5 w-24 font-semibold text-gray-500 text-center">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {articles.map((a) => {
-                          const cfg = PRIORITE_CONFIG[a.priorite];
-                          const auteursCourts = a.auteurs.split(',').slice(0, 2).join(', ') + (a.auteurs.split(',').length > 2 ? ' et al.' : '');
-                          const estAjoute = ajoutes.has(a.id) || a.dejaDisponible;
-                          return (
-                            <tr key={a.id} className="hover:bg-gray-50 align-top">
-                              <td className="px-3 py-2.5 max-w-[160px]">
-                                <p className="font-medium text-gray-900 leading-snug mb-0.5 line-clamp-2">{a.titre}</p>
-                                <p className="text-gray-400">{auteursCourts} · {a.annee}</p>
-                                {a.citationCount > 0 && <p className="text-gray-300 mt-0.5">{a.citationCount} citations</p>}
-                              </td>
-                              <td className="px-3 py-2.5">
-                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${cfg.bg} ${cfg.color}`}>
-                                  <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                                  {a.priorite}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2.5 text-gray-600 max-w-[180px]">
-                                <p className="line-clamp-3 leading-relaxed">{a.resume}</p>
-                              </td>
-                              <td className="px-3 py-2.5 text-indigo-700 max-w-[180px]">
-                                <p className="line-clamp-3 leading-relaxed">{a.apport}</p>
-                              </td>
-                              <td className="px-3 py-2.5">
-                                <div className="flex flex-col gap-1.5 items-center">
-                                  {(a.doi || a.urlPdf) && (
-                                    <a
-                                      href={a.urlPdf ?? `https://doi.org/${a.doi}`}
-                                      target="_blank" rel="noopener noreferrer"
-                                      className="flex items-center gap-1 text-gray-400 hover:text-indigo-600 transition-colors"
-                                    >
-                                      <ExternalLink className="w-3 h-3" /> Lire
-                                    </a>
-                                  )}
-                                  {estAjoute ? (
-                                    <span className="flex items-center gap-1 text-green-600 font-medium">
-                                      <CheckCircle2 className="w-3 h-3" />
-                                      {a.dejaDisponible && !ajoutes.has(a.id) ? 'Déjà là' : 'Ajouté'}
-                                    </span>
-                                  ) : (
-                                    <button
-                                      onClick={() => ajouterArticle(a)}
-                                      className="flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium transition-colors"
-                                    >
-                                      <Plus className="w-3 h-3" /> Ajouter
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              {/* Synthèse */}
-              {synthese && (
-                <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Sparkles className="w-4 h-4 text-indigo-600" />
-                    <span className="text-sm font-semibold text-indigo-800">Synthèse de la recherche</span>
-                  </div>
-                  <p className="text-sm text-indigo-900 leading-relaxed whitespace-pre-line">{synthese}</p>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* État vide initial */}
-          {!rechercheLoading && articles.length === 0 && !erreurRecherche && (
-            <div className="flex flex-col items-center justify-center h-full text-center py-12">
-              <BookOpen className="w-10 h-10 text-gray-200 mb-3" />
-              <p className="text-sm text-gray-400">Entrez un sujet pour trouver des articles</p>
-              <p className="text-xs text-gray-300 mt-1">Sources : Semantic Scholar · Analyse par Agent IA de MaThèse</p>
-              {biblioExistante.length > 0 && (
-                <p className="text-xs text-indigo-400 mt-2">
-                  L&apos;IA connaît vos {biblioExistante.length} articles existants
-                </p>
-              )}
+              {articlesIA.map((article, idx) => (
+                <ArticleCardIA
+                  key={idx}
+                  article={article}
+                  ajoute={ajoutesIA.has(idx)}
+                  onAjouter={() => ajouterArticleIA(article, idx)}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -599,80 +395,85 @@ export default function RecherchePage() {
   );
 }
 
-// ─── Carte article ────────────────────────────────────────────────────────────
+// ─── Carte article CrossRef ───────────────────────────────────────────────────
 
-function ArticleCard({ article, expanded, onToggle, onAjouter, ajoute }: {
-  article: ArticleResultat;
-  expanded: boolean;
-  onToggle: () => void;
-  onAjouter: () => void;
+function ArticleCardIA({
+  article,
+  ajoute,
+  onAjouter,
+}: {
+  article: ArticleCrossRef;
   ajoute: boolean;
+  onAjouter: () => void;
 }) {
-  const cfg = PRIORITE_CONFIG[article.priorite];
-  const auteursCourts = article.auteurs.split(',').slice(0, 3).join(', ') + (article.auteurs.split(',').length > 3 ? ' et al.' : '');
-  const estDispo = article.dejaDisponible || ajoute;
+  const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className={`bg-white border rounded-xl overflow-hidden ${estDispo ? 'border-green-200 bg-green-50/30' : cfg.border}`}>
+    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
       <div className="px-4 py-3">
         <div className="flex items-start gap-2">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-gray-900 leading-snug">{article.titre}</p>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {auteursCourts} · {article.annee}
-              {article.citationCount > 0 && <span className="ml-2 text-gray-300">{article.citationCount} citations</span>}
-            </p>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              {article.auteurs && (
+                <span className="text-xs text-gray-400">{article.auteurs}</span>
+              )}
+              {article.annee && (
+                <span className="text-xs text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{article.annee}</span>
+              )}
+              {article.type && (
+                <span className="text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded capitalize">{article.type}</span>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.bg} ${cfg.color}`}>
-              {cfg.label}
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-2 mt-3">
+          {ajoute ? (
+            <span className="flex items-center gap-1.5 text-xs text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg font-medium">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Ajouté à la bibliothèque
             </span>
-
-            {/* Statut bibliothèque */}
-            {estDispo ? (
-              <span className="flex items-center gap-1 text-xs text-green-700 bg-green-100 px-2 py-0.5 rounded-full font-medium">
-                <CheckCircle2 className="w-3 h-3" />
-                {article.dejaDisponible && !ajoute ? 'Dans votre bibliothèque' : 'Ajouté'}
-              </span>
-            ) : (
-              <button
-                onClick={onAjouter}
-                className="flex items-center gap-1 text-xs text-white bg-indigo-600 hover:bg-indigo-700 px-2.5 py-0.5 rounded-full font-medium transition-colors"
-              >
-                <Plus className="w-3 h-3" />
-                Ajouter
-              </button>
-            )}
-
-            {(article.doi || article.urlPdf) && (
-              <a
-                href={article.urlPdf ?? `https://doi.org/${article.doi}`}
-                target="_blank" rel="noopener noreferrer"
-                className="p-1 text-gray-300 hover:text-indigo-600 transition-colors"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            )}
-            <button onClick={onToggle} className="p-1 text-gray-300 hover:text-gray-600 transition-colors">
-              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          ) : (
+            <button
+              onClick={onAjouter}
+              className="flex items-center gap-1.5 text-xs text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg font-medium transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Ajouter à ma bibliothèque
             </button>
-          </div>
+          )}
+
+          {(article.doi || article.url) && (
+            <a
+              href={article.url ?? `https://doi.org/${article.doi}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-600 px-2 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Voir
+            </a>
+          )}
+
+          {article.abstract && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1.5 rounded-lg hover:bg-gray-50 transition-colors ml-auto"
+            >
+              {expanded ? 'Masquer résumé' : 'Voir résumé'}
+            </button>
+          )}
         </div>
       </div>
 
-      {expanded && (
-        <div className="border-t border-gray-100 px-4 pb-3 pt-2.5 space-y-2">
-          {article.resume && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 mb-1">Résumé</p>
-              <p className="text-sm text-gray-700 leading-relaxed">{article.resume}</p>
-            </div>
-          )}
-          {article.apport && (
-            <div className="bg-indigo-50 rounded-lg px-3 py-2">
-              <p className="text-xs font-semibold text-indigo-700 mb-0.5">Apport pour votre recherche</p>
-              <p className="text-sm text-indigo-900 leading-relaxed">{article.apport}</p>
-            </div>
+      {expanded && article.abstract && (
+        <div className="border-t border-gray-50 px-4 py-3 bg-gray-50/50">
+          <p className="text-xs font-semibold text-gray-500 mb-1">Résumé</p>
+          <p className="text-xs text-gray-600 leading-relaxed">{article.abstract}</p>
+          {article.doi && (
+            <p className="text-xs text-gray-300 mt-2">DOI : {article.doi}</p>
           )}
         </div>
       )}
