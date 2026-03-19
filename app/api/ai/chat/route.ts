@@ -127,7 +127,16 @@ Règles :
     async start(controller) {
       const encode = (text: string) => controller.enqueue(new TextEncoder().encode(text));
 
-      let currentMessages: Anthropic.MessageParam[] = messages;
+      // Nettoyer les messages : supprimer tous les champs personnalisés du frontend
+      // (proposeWord, isError, retryFromMessages, etc.) qui corrompent la requête API
+      // et exclure les messages d'erreur qui ne sont pas de vraies réponses IA
+      const cleanMessages: Anthropic.MessageParam[] = (
+        messages as Array<{ role: string; content: string; isError?: boolean }>
+      )
+        .filter((m) => !m.isError && m.content && m.content.trim() !== '')
+        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
+      let currentMessages: Anthropic.MessageParam[] = cleanMessages;
       let foundArticles: ArticleCrossRef[] = [];
 
       try {
