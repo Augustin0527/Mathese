@@ -10,7 +10,7 @@ import {
   Send, Loader2, Sparkles, BookOpen, ExternalLink,
   Plus, CheckCircle2, Copy, Check, FileSearch, FileDown,
   MessageSquarePlus, Trash2, Pencil, X, ChevronLeft, ChevronRight,
-  MessagesSquare,
+  MessagesSquare, RefreshCw, AlertCircle,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -39,6 +39,8 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   proposeWord?: boolean;
+  isError?: boolean;
+  retryFromMessages?: ChatMessage[]; // messages à renvoyer en cas de retry
 }
 
 interface Conversation {
@@ -355,6 +357,23 @@ export default function RecherchePage() {
       }
 
       let visibleFinal = separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText;
+
+      // Détecter une erreur serveur signalée dans le stream
+      if (visibleFinal.includes('__ERROR__')) {
+        const errorMsg: ChatMessage = {
+          role: 'assistant',
+          content: 'Erreur de connexion.',
+          isError: true,
+          retryFromMessages: newMessages,
+        };
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = errorMsg;
+          return updated;
+        });
+        return;
+      }
+
       const proposeWord = visibleFinal.includes('__PROPOSE_WORD__');
       visibleFinal = visibleFinal.replace(/\n*__PROPOSE_WORD__\n*/g, '').trim();
 
@@ -370,7 +389,12 @@ export default function RecherchePage() {
 
     } catch (err: unknown) {
       if ((err as Error).name === 'AbortError') return;
-      const errorMsg: ChatMessage = { role: 'assistant', content: 'Erreur de connexion. Réessayez.' };
+      const errorMsg: ChatMessage = {
+        role: 'assistant',
+        content: 'Erreur de connexion.',
+        isError: true,
+        retryFromMessages: newMessages,
+      };
       setMessages((prev) => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
@@ -636,6 +660,33 @@ export default function RecherchePage() {
                     ) : (
                       <span className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</span>
                     )
+                  ) : msg.isError ? (
+                    /* ── Bulle d'erreur avec bouton Réessayer ── */
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center gap-2 text-red-500">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                        <span className="text-sm font-medium">La réponse n&apos;a pas pu être générée.</span>
+                      </div>
+                      <p className="text-xs text-gray-400 leading-relaxed">
+                        La requête a peut-être pris trop de temps. Pour les rapports longs, essayez de simplifier ou de relancer.
+                      </p>
+                      {msg.retryFromMessages && (
+                        <button
+                          onClick={() => {
+                            // Retirer le message d'erreur et réessayer
+                            const lastUser = msg.retryFromMessages![msg.retryFromMessages!.length - 1];
+                            const base = msg.retryFromMessages!.slice(0, -1);
+                            setMessages(base);
+                            envoyerMessage(lastUser.content, base);
+                          }}
+                          disabled={chatLoading}
+                          className="flex items-center gap-2 text-sm text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 px-4 py-2 rounded-xl font-medium transition-colors w-fit"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          Réessayer
+                        </button>
+                      )}
+                    </div>
                   ) : msg.content ? (
                     <>
                       <MarkdownMessage content={msg.content} />
