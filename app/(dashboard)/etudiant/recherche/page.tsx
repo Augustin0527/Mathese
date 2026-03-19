@@ -5,9 +5,10 @@ import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { Components } from 'react-markdown';
 import {
   Send, Loader2, Sparkles, BookOpen, ExternalLink,
-  Plus, CheckCircle2, Copy, Check, FileSearch,
+  Plus, CheckCircle2, Copy, Check, FileSearch, FileDown,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -37,15 +38,176 @@ interface ChatMessage {
   content: string;
 }
 
+// ─── Composant table avec copie ───────────────────────────────────────────────
+
+function CopyableTable({ children }: { children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  function copyTable() {
+    if (!tableRef.current) return;
+    const rows = Array.from(tableRef.current.querySelectorAll('tr'));
+    const text = rows
+      .map((row) =>
+        Array.from(row.querySelectorAll('th, td'))
+          .map((cell) => cell.textContent?.trim() ?? '')
+          .join('\t')
+      )
+      .join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <div className="relative my-4 group">
+      <button
+        onClick={copyTable}
+        className="absolute -top-2 right-0 z-10 flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-600 bg-white border border-gray-200 hover:border-indigo-300 px-2 py-0.5 rounded-md opacity-0 group-hover:opacity-100 transition-all shadow-sm"
+        title="Copier le tableau"
+      >
+        {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+        {copied ? 'Copié !' : 'Copier'}
+      </button>
+      <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
+        <table ref={tableRef} className="w-full text-sm border-collapse">
+          {children}
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Composant markdown riche ─────────────────────────────────────────────────
+
+function MarkdownMessage({ content }: { content: string }) {
+  const components: Components = {
+    // Titres
+    h1: ({ children }) => (
+      <h1 className="text-base font-bold text-gray-900 mt-5 mb-2 pb-1 border-b border-gray-100">{children}</h1>
+    ),
+    h2: ({ children }) => (
+      <h2 className="text-sm font-bold text-gray-900 mt-4 mb-2 flex items-center gap-2">
+        <span className="w-1 h-4 bg-indigo-500 rounded-full inline-block flex-shrink-0" />
+        {children}
+      </h2>
+    ),
+    h3: ({ children }) => (
+      <h3 className="text-sm font-semibold text-gray-800 mt-3 mb-1.5">{children}</h3>
+    ),
+
+    // Paragraphes
+    p: ({ children }) => (
+      <p className="text-sm text-gray-800 leading-relaxed my-2">{children}</p>
+    ),
+
+    // Listes à puces
+    ul: ({ children }) => (
+      <ul className="my-2 space-y-1.5 pl-1">{children}</ul>
+    ),
+    ol: ({ children }) => (
+      <ol className="my-2 space-y-1.5 pl-1 list-decimal list-inside">{children}</ol>
+    ),
+    li: ({ children }) => (
+      <li className="text-sm text-gray-800 leading-relaxed flex items-start gap-2">
+        <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-indigo-400 flex-shrink-0" />
+        <span>{children}</span>
+      </li>
+    ),
+
+    // Code inline
+    code: ({ className, children, ...props }) => {
+      const isBlock = className?.includes('language-');
+      if (isBlock) {
+        return (
+          <code className="block w-full text-xs text-indigo-800 font-mono leading-relaxed whitespace-pre-wrap">
+            {children}
+          </code>
+        );
+      }
+      return (
+        <code className="text-xs text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded font-mono" {...props}>
+          {children}
+        </code>
+      );
+    },
+
+    // Bloc de code
+    pre: ({ children }) => (
+      <pre className="my-3 bg-gray-900 text-gray-100 rounded-xl p-4 text-xs overflow-x-auto border border-gray-700 leading-relaxed">
+        {children}
+      </pre>
+    ),
+
+    // Citation
+    blockquote: ({ children }) => (
+      <blockquote className="my-3 border-l-4 border-indigo-400 bg-indigo-50 pl-4 pr-3 py-2 rounded-r-xl text-sm text-indigo-800 italic">
+        {children}
+      </blockquote>
+    ),
+
+    // Séparateur
+    hr: () => <hr className="my-4 border-gray-100" />,
+
+    // Gras / italique
+    strong: ({ children }) => (
+      <strong className="font-semibold text-gray-900">{children}</strong>
+    ),
+    em: ({ children }) => (
+      <em className="italic text-gray-700">{children}</em>
+    ),
+
+    // Lien
+    a: ({ href, children }) => (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800 transition-colors"
+      >
+        {children}
+      </a>
+    ),
+
+    // ── Tableau avec bordures visibles + bouton copie ──
+    table: ({ children }) => <CopyableTable>{children}</CopyableTable>,
+    thead: ({ children }) => (
+      <thead className="bg-indigo-600 text-white">{children}</thead>
+    ),
+    tbody: ({ children }) => (
+      <tbody className="divide-y divide-gray-100">{children}</tbody>
+    ),
+    tr: ({ children }) => (
+      <tr className="hover:bg-indigo-50/40 transition-colors">{children}</tr>
+    ),
+    th: ({ children }) => (
+      <th className="text-left text-xs font-semibold px-4 py-2.5 border-r border-indigo-500 last:border-r-0 whitespace-nowrap">
+        {children}
+      </th>
+    ),
+    td: ({ children }) => (
+      <td className="text-sm text-gray-700 px-4 py-2.5 border-r border-gray-100 last:border-r-0 align-top leading-relaxed">
+        {children}
+      </td>
+    ),
+  };
+
+  return (
+    <div className="min-w-0">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 // ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function RecherchePage() {
   const { user, profile } = useAuth();
 
-  // ── Bibliothèque existante ──
   const [biblioExistante, setBiblioExistante] = useState<ArticleBiblio[]>([]);
-
-  // ── Chat ──
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
@@ -53,11 +215,10 @@ export default function RecherchePage() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // ── Résultats de recherche IA ──
   const [articlesIA, setArticlesIA] = useState<ArticleCrossRef[]>([]);
   const [ajoutesIA, setAjoutesIA] = useState<Set<number>>(new Set());
+  const [exportingWord, setExportingWord] = useState<number | null>(null);
 
-  // Charger la bibliothèque existante
   useEffect(() => {
     if (!user) return;
     supabase
@@ -73,7 +234,6 @@ export default function RecherchePage() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // ── Envoi d'un message ────────────────────────────────────────────────────
   async function envoyerMessage() {
     if (!input.trim() || chatLoading) return;
 
@@ -86,7 +246,6 @@ export default function RecherchePage() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // Ajouter le message assistant vide avant de streamer
     setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
     try {
@@ -112,7 +271,6 @@ export default function RecherchePage() {
         if (done) break;
         fullText += decoder.decode(value, { stream: true });
 
-        // Extraire le texte visible (avant __SEARCH_RESULTS__)
         const separatorIdx = fullText.indexOf('\n\n__SEARCH_RESULTS__');
         const visibleText = separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText;
 
@@ -123,7 +281,6 @@ export default function RecherchePage() {
         });
       }
 
-      // Après la réception complète : extraire les articles de recherche
       const separatorIdx = fullText.indexOf('\n\n__SEARCH_RESULTS__');
       if (separatorIdx >= 0) {
         const jsonStr = fullText.slice(separatorIdx + '\n\n__SEARCH_RESULTS__'.length);
@@ -138,7 +295,6 @@ export default function RecherchePage() {
         }
       }
 
-      // S'assurer que le texte final affiché est propre
       const visibleFinal = separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText;
       setMessages((prev) => {
         const updated = [...prev];
@@ -162,7 +318,35 @@ export default function RecherchePage() {
     }
   }
 
-  // ── Ajouter un article CrossRef à la bibliothèque ────────────────────────
+  async function exporterWord(content: string, index: number) {
+    if (exportingWord !== null) return;
+    setExportingWord(index);
+    try {
+      const res = await fetch('/api/ai/export-word', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contenu: content,
+          titre: profile?.sujet_recherche ? `Rapport — ${profile.sujet_recherche}` : 'Rapport Agent IA',
+          auteur: [profile?.prenom, profile?.nom].filter(Boolean).join(' ') || undefined,
+          sujet: profile?.sujet_recherche ?? '',
+        }),
+      });
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `rapport-ia-${Date.now()}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('Erreur lors de la génération Word. Réessayez.');
+    } finally {
+      setExportingWord(null);
+    }
+  }
+
   async function ajouterArticleIA(article: ArticleCrossRef, index: number) {
     if (!user || ajoutesIA.has(index)) return;
     await supabase.from('articles').insert({
@@ -184,7 +368,7 @@ export default function RecherchePage() {
     <div className="flex flex-col lg:flex-row h-full min-h-0 overflow-hidden">
 
       {/* ══ Panneau gauche : Chat IA ════════════════════════════════════════ */}
-      <div className="flex flex-col w-full lg:w-[55%] min-h-0 border-r border-gray-100 flex-shrink-0">
+      <div className="flex flex-col w-full lg:w-[60%] min-h-0 border-r border-gray-100 flex-shrink-0">
 
         {/* En-tête */}
         <div className="flex-shrink-0 px-5 py-3.5 border-b border-gray-100 bg-white">
@@ -204,7 +388,7 @@ export default function RecherchePage() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 min-h-0">
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0 bg-gray-50/30">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center py-8 px-4">
               <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-2xl flex items-center justify-center mb-3 shadow-sm">
@@ -237,57 +421,55 @@ export default function RecherchePage() {
             <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} gap-1`}>
               {msg.role === 'assistant' && (
                 <div className="flex items-center gap-1.5 px-1">
-                  <div className="w-4 h-4 bg-gradient-to-br from-indigo-500 to-violet-600 rounded flex items-center justify-center">
-                    <Sparkles className="w-2.5 h-2.5 text-white" />
+                  <div className="w-5 h-5 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-md flex items-center justify-center flex-shrink-0">
+                    <Sparkles className="w-3 h-3 text-white" />
                   </div>
                   <span className="text-xs font-medium text-gray-500">Agent IA</span>
                 </div>
               )}
-              <div className={`flex items-end gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+              <div className={`flex items-end gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} w-full`}>
                 <div
-                  className={`max-w-[90%] rounded-2xl text-sm ${
+                  className={`rounded-2xl text-sm ${
                     msg.role === 'user'
-                      ? 'bg-gradient-to-br from-indigo-600 to-violet-600 text-white px-4 py-2.5 rounded-br-sm shadow-sm'
-                      : 'bg-white border border-gray-100 px-4 py-3 rounded-bl-sm shadow-sm'
+                      ? 'max-w-[80%] bg-gradient-to-br from-indigo-600 to-violet-600 text-white px-4 py-2.5 rounded-br-sm shadow-sm'
+                      : 'w-full bg-white border border-gray-200 px-5 py-4 rounded-bl-sm shadow-sm'
                   }`}
                 >
                   {msg.role === 'user' ? (
-                    <span className="whitespace-pre-wrap">{msg.content}</span>
+                    <span className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</span>
                   ) : msg.content ? (
-                    <div className="prose prose-sm max-w-none
-                      prose-headings:font-semibold prose-headings:text-gray-900 prose-headings:mt-3 prose-headings:mb-1
-                      prose-h1:text-base prose-h2:text-sm prose-h3:text-sm
-                      prose-p:text-gray-800 prose-p:my-1 prose-p:leading-relaxed
-                      prose-li:text-gray-800 prose-li:my-0.5
-                      prose-strong:text-gray-900 prose-strong:font-semibold
-                      prose-table:text-xs prose-td:px-2 prose-td:py-1 prose-th:px-2 prose-th:py-1 prose-th:bg-indigo-50
-                      prose-code:text-indigo-700 prose-code:bg-indigo-50 prose-code:px-1 prose-code:rounded prose-code:text-xs
-                      prose-pre:bg-gray-50 prose-pre:rounded-xl prose-pre:p-3 prose-pre:border prose-pre:border-gray-100
-                      prose-blockquote:border-l-indigo-400 prose-blockquote:bg-indigo-50 prose-blockquote:px-3 prose-blockquote:py-1 prose-blockquote:rounded-r-lg prose-blockquote:text-indigo-800
-                      prose-hr:border-gray-100">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {msg.content}
-                      </ReactMarkdown>
-                    </div>
+                    <MarkdownMessage content={msg.content} />
                   ) : (
-                    <span className="flex items-center gap-1.5 text-gray-400 text-xs">
+                    <span className="flex items-center gap-1.5 text-gray-400 text-xs py-1">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Réflexion...
+                      Réflexion en cours...
                     </span>
                   )}
                 </div>
                 {msg.role === 'assistant' && msg.content && (
-                  <button
-                    onClick={async () => {
-                      await navigator.clipboard.writeText(msg.content);
-                      setCopiedId(i);
-                      setTimeout(() => setCopiedId(null), 2000);
-                    }}
-                    className="mb-1 p-1 text-gray-300 hover:text-gray-500 transition-colors flex-shrink-0"
-                    title="Copier"
-                  >
-                    {copiedId === i ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
+                  <div className="flex flex-col gap-1 mb-1 flex-shrink-0">
+                    <button
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(msg.content);
+                        setCopiedId(i);
+                        setTimeout(() => setCopiedId(null), 2000);
+                      }}
+                      className="p-1.5 text-gray-300 hover:text-gray-500 transition-colors"
+                      title="Copier la réponse"
+                    >
+                      {copiedId === i ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => exporterWord(msg.content, i)}
+                      disabled={exportingWord === i}
+                      className="p-1.5 text-gray-300 hover:text-blue-500 transition-colors disabled:opacity-50"
+                      title="Exporter en Word (.docx)"
+                    >
+                      {exportingWord === i
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                        : <FileDown className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -298,21 +480,21 @@ export default function RecherchePage() {
         {/* Input */}
         <div className="flex-shrink-0 border-t border-gray-100 px-4 py-3 bg-white">
           <div className="flex gap-2">
-            <input
-              type="text"
+            <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); envoyerMessage(); }
               }}
-              placeholder="Votre question ou demande de recherche..."
+              placeholder="Votre question ou demande de recherche... (Entrée pour envoyer, Maj+Entrée pour sauter une ligne)"
               disabled={chatLoading}
-              className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+              rows={2}
+              className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 resize-none leading-relaxed"
             />
             <button
               onClick={envoyerMessage}
               disabled={!input.trim() || chatLoading}
-              className="flex items-center justify-center w-9 h-9 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors flex-shrink-0"
+              className="flex items-center justify-center w-10 h-10 self-end bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors flex-shrink-0"
             >
               {chatLoading
                 ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -320,6 +502,7 @@ export default function RecherchePage() {
               }
             </button>
           </div>
+          <p className="text-xs text-gray-300 mt-1.5 px-1">Maj+Entrée pour sauter une ligne</p>
         </div>
       </div>
 
@@ -346,7 +529,6 @@ export default function RecherchePage() {
         {/* Corps */}
         <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0">
 
-          {/* État vide */}
           {articlesIA.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center py-12 px-4">
               <div className="w-14 h-14 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-center mb-4">
@@ -367,7 +549,6 @@ export default function RecherchePage() {
             </div>
           )}
 
-          {/* Liste des articles trouvés par l'IA */}
           {articlesIA.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center justify-between mb-2">
@@ -428,7 +609,6 @@ function ArticleCardIA({
           </div>
         </div>
 
-        {/* Actions */}
         <div className="flex items-center gap-2 mt-3">
           {ajoute ? (
             <span className="flex items-center gap-1.5 text-xs text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg font-medium">

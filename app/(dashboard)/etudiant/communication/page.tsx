@@ -142,6 +142,35 @@ export default function CommunicationPage() {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  async function telechargerWord() {
+    if (!contenu || exporting) return;
+    setExporting(true);
+    try {
+      const res = await fetch('/api/ai/export-word', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contenu,
+          titre: `Plan de présentation — ${sujet || 'Communication'}`,
+          sujet,
+          auteur: [profile?.prenom, profile?.nom].filter(Boolean).join(' ') || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'communication-mathese.docx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('Erreur lors de la génération du document Word. Réessayez.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function telechargerPPTX() {
     if (!contenu || exporting) return;
     setExporting(true);
@@ -356,6 +385,14 @@ export default function CommunicationPage() {
                   >
                     {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                     {exporting ? 'Export...' : 'Télécharger PPTX'}
+                  </button>
+                  <button
+                    onClick={telechargerWord}
+                    disabled={exporting}
+                    className="flex items-center gap-1.5 text-xs bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 px-3 py-1.5 rounded-lg transition-colors font-medium"
+                  >
+                    {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                    {exporting ? 'Export...' : 'Télécharger Word'}
                   </button>
                 </div>
               )}
