@@ -298,7 +298,7 @@ Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères p
 
           const stream = anthropic.messages.stream({
             model: 'claude-sonnet-4-6',
-            max_tokens: 2500,
+            max_tokens: 4000,
             system: systemPrompt,
             tools,
             messages: currentMessages,
@@ -370,20 +370,28 @@ Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères p
             } else if (toolUse.name === 'generer_document_word') {
               let titre = String(toolUse.input.titre ?? 'Document');
               const contenu = String(toolUse.input.contenu ?? '');
-              // Sanitize : si le titre ressemble à une demande utilisateur (trop long ou commence par un verbe d'action),
-              // extraire un titre depuis le contenu markdown (première ligne H1/H2) ou utiliser un titre générique
-              if (titre.length > 100 || /^(reprends|génère|crée|fais|donne|avec|update|écris)/i.test(titre.trim())) {
-                const h1Match = contenu.match(/^#{1,2}\s+(.+)/m);
-                titre = h1Match ? h1Match[1].slice(0, 80) : 'Rapport académique';
+
+              // Si le contenu est vide (JSON tronqué par max_tokens), signaler l'erreur
+              if (!contenu || contenu.trim().length < 100) {
+                encode('\n__WORD_DOC_ERROR__\n');
+                toolResults.push({
+                  type: 'tool_result',
+                  tool_use_id: toolUse.id,
+                  content: 'Erreur : le contenu du document est vide ou trop court.',
+                });
+              } else {
+                // Sanitize le titre si c'est un message utilisateur brut
+                if (titre.length > 100 || /^(reprends|génère|crée|fais|donne|avec|update|écris)/i.test(titre.trim())) {
+                  const h1Match = contenu.match(/^#{1,2}\s+(.+)/m);
+                  titre = h1Match ? h1Match[1].slice(0, 80) : 'Rapport académique';
+                }
+                encode(`\n__WORD_DOC__${JSON.stringify({ titre, contenu })}__WORD_DOC_END__\n`);
+                toolResults.push({
+                  type: 'tool_result',
+                  tool_use_id: toolUse.id,
+                  content: `Document Word "${titre}" transmis au client pour téléchargement.`,
+                });
               }
-
-              encode(`\n__WORD_DOC__${JSON.stringify({ titre, contenu })}__WORD_DOC_END__\n`);
-
-              toolResults.push({
-                type: 'tool_result',
-                tool_use_id: toolUse.id,
-                content: `Document Word "${titre}" transmis au client pour téléchargement.`,
-              });
             }
           }
 

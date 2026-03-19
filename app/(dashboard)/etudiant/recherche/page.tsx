@@ -464,13 +464,29 @@ export default function RecherchePage() {
 
       let visibleFinal = (separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText)
         .replace(/__STATUS__[^_]*__STATUS_END__\n?/g, '')
-        .replace(/\n*__WORD_DOC__[\s\S]*?__WORD_DOC_END__\n*/g, '');
+        .replace(/\n*__WORD_DOC__[\s\S]*?__WORD_DOC_END__\n*/g, '')
+        .replace(/\n*__WORD_DOC_ERROR__\n*/g, '');
 
       // Extraire le document Word si présent
       let wordDoc: { titre: string; contenu: string } | undefined;
       const wordDocMatch = fullText.match(/__WORD_DOC__([\s\S]*?)__WORD_DOC_END__/);
       if (wordDocMatch) {
         try { wordDoc = JSON.parse(wordDocMatch[1]); } catch { /* ignore */ }
+      }
+
+      // Erreur de génération Word (contenu trop court / JSON tronqué)
+      if (fullText.includes('__WORD_DOC_ERROR__')) {
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            role: 'assistant',
+            content: '⚠️ Le document est trop long pour être généré en une seule fois. Essayez de demander un rapport plus court ou en plusieurs parties.',
+            isError: true,
+            retryFromMessages: newMessages,
+          };
+          return updated;
+        });
+        return;
       }
 
       // Détecter une erreur serveur signalée dans le stream
