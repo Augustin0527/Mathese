@@ -40,7 +40,8 @@ interface ChatMessage {
   content: string;
   proposeWord?: boolean;
   isError?: boolean;
-  retryFromMessages?: ChatMessage[]; // messages à renvoyer en cas de retry
+  retryFromMessages?: ChatMessage[];
+  wordDoc?: { titre: string; contenu: string }; // document Word à générer
 }
 
 interface Conversation {
@@ -48,6 +49,99 @@ interface Conversation {
   titre: string;
   created_at: string;
   updated_at: string;
+}
+
+// ─── Composant table avec copie ───────────────────────────────────────────────
+
+// ─── Widget de téléchargement Word ───────────────────────────────────────────
+
+function WordDocWidget({ titre, contenu, auteur, sujet }: {
+  titre: string;
+  contenu: string;
+  auteur?: string;
+  sujet?: string;
+}) {
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const filenameRef = useRef(
+    (titre.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50) || 'document') + '.docx'
+  );
+
+  useEffect(() => {
+    let url: string | null = null;
+    fetch('/api/ai/export-word', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contenu, titre, auteur, sujet }),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error();
+        const blob = await res.blob();
+        url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+        setStatus('ready');
+      })
+      .catch(() => setStatus('error'));
+
+    return () => { if (url) URL.revokeObjectURL(url); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (status === 'loading') {
+    return (
+      <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-3">
+        <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+          <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-gray-700">Génération du document Word...</p>
+          <p className="text-xs text-gray-400">{titre}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 text-red-500 text-sm">
+        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+        Erreur lors de la génération du document. Réessayez.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+          <FileDown className="w-5 h-5 text-blue-600" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-gray-800">Document Word prêt</p>
+          <p className="text-xs text-gray-400 truncate">{titre}</p>
+        </div>
+      </div>
+      <div className="flex gap-2 flex-wrap">
+        <a
+          href={downloadUrl!}
+          download={filenameRef.current}
+          className="flex items-center gap-2 text-sm text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-xl font-medium transition-colors shadow-sm"
+        >
+          <FileDown className="w-4 h-4" />
+          Télécharger (.docx)
+        </a>
+        <a
+          href={downloadUrl!}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-4 py-2 rounded-xl font-medium transition-colors"
+        >
+          <ExternalLink className="w-4 h-4" />
+          Ouvrir
+        </a>
+      </div>
+    </div>
+  );
 }
 
 // ─── Composant table avec copie ───────────────────────────────────────────────
@@ -346,7 +440,8 @@ export default function RecherchePage() {
         const separatorIdx = fullText.indexOf('\n\n__SEARCH_RESULTS__');
         const visibleText = (separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText)
           .replace(/\n*__PROPOSE_WORD__\n*/g, '')
-          .replace(/__STATUS__[^_]*__STATUS_END__\n?/g, '');
+          .replace(/__STATUS__[^_]*__STATUS_END__\n?/g, '')
+          .replace(/\n*__WORD_DOC__[\s\S]*?__WORD_DOC_END__\n*/g, '');
 
         setMessages((prev) => {
           const updated = [...prev];
@@ -367,7 +462,15 @@ export default function RecherchePage() {
       }
 
       let visibleFinal = (separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText)
-        .replace(/__STATUS__[^_]*__STATUS_END__\n?/g, '');
+        .replace(/__STATUS__[^_]*__STATUS_END__\n?/g, '')
+        .replace(/\n*__WORD_DOC__[\s\S]*?__WORD_DOC_END__\n*/g, '');
+
+      // Extraire le document Word si présent
+      let wordDoc: { titre: string; contenu: string } | undefined;
+      const wordDocMatch = fullText.match(/__WORD_DOC__([\s\S]*?)__WORD_DOC_END__/);
+      if (wordDocMatch) {
+        try { wordDoc = JSON.parse(wordDocMatch[1]); } catch { /* ignore */ }
+      }
 
       // Détecter une erreur serveur signalée dans le stream
       if (visibleFinal.includes('__ERROR__')) {
@@ -388,7 +491,7 @@ export default function RecherchePage() {
       const proposeWord = visibleFinal.includes('__PROPOSE_WORD__');
       visibleFinal = visibleFinal.replace(/\n*__PROPOSE_WORD__\n*/g, '').trim();
 
-      const assistantMsg: ChatMessage = { role: 'assistant', content: visibleFinal, proposeWord };
+      const assistantMsg: ChatMessage = { role: 'assistant', content: visibleFinal, proposeWord, wordDoc };
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = assistantMsg;
@@ -699,10 +802,18 @@ export default function RecherchePage() {
                         </button>
                       )}
                     </div>
-                  ) : msg.content ? (
+                  ) : msg.content || msg.wordDoc ? (
                     <>
-                      <MarkdownMessage content={msg.content} />
-                      {msg.proposeWord && (
+                      {msg.content && <MarkdownMessage content={msg.content} />}
+                      {msg.wordDoc && (
+                        <WordDocWidget
+                          titre={msg.wordDoc.titre}
+                          contenu={msg.wordDoc.contenu}
+                          auteur={[profile?.prenom, profile?.nom].filter(Boolean).join(' ') || undefined}
+                          sujet={profile?.sujet_recherche ?? ''}
+                        />
+                      )}
+                      {msg.proposeWord && !msg.wordDoc && (
                         <div className="mt-3 pt-3 border-t border-gray-100">
                           <button onClick={() => exporterWord(msg.content, i)} disabled={exportingWord === i}
                             className="flex items-center gap-2 text-xs text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 px-4 py-2 rounded-xl font-medium transition-colors shadow-sm">

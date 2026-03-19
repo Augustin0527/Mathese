@@ -108,20 +108,35 @@ Règles :
 - Quand l'étudiant demande des articles ou de la littérature, utilise TOUJOURS l'outil rechercher_articles
 - Sois précis, encourageant, et adapte ton niveau au contexte académique
 - Si on te demande qui tu es : tu es "l'Agent IA de MaThèse"
-- Quand tu rédiges un rapport, une synthèse ou un document structuré, ajoute exactement cette ligne à la fin sur une ligne séparée : __PROPOSE_WORD__`;
+- Quand l'étudiant demande un document Word, un rapport complet, une synthèse à télécharger : utilise l'outil generer_document_word avec le contenu complet en markdown. Écris d'abord une courte phrase d'introduction ("Je génère votre rapport Word..."), puis appelle l'outil. N'écris JAMAIS le contenu du document directement dans le chat.
+- Pour les réponses normales (questions, explications, analyses courtes), réponds directement dans le chat en markdown. __PROPOSE_WORD__ n'est plus utilisé.`;
 
-  const tools: Anthropic.Tool[] = [{
-    name: 'rechercher_articles',
-    description: "Recherche des articles académiques sur CrossRef. À utiliser quand l'étudiant demande des articles, références ou littérature.",
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        query: { type: 'string', description: 'Mots-clés en anglais de préférence' },
-        nb: { type: 'number', description: 'Nombre de résultats (max 8)' },
+  const tools: Anthropic.Tool[] = [
+    {
+      name: 'rechercher_articles',
+      description: "Recherche des articles académiques sur CrossRef. À utiliser quand l'étudiant demande des articles, références ou littérature.",
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          query: { type: 'string', description: 'Mots-clés en anglais de préférence' },
+          nb: { type: 'number', description: 'Nombre de résultats (max 8)' },
+        },
+        required: ['query'],
       },
-      required: ['query'],
     },
-  }];
+    {
+      name: 'generer_document_word',
+      description: "Génère un document Word (.docx) complet et structuré. À utiliser UNIQUEMENT quand l'étudiant demande un rapport, une synthèse, un document complet à télécharger. Le contenu en markdown est transmis directement au système de génération sans être affiché dans le chat.",
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          titre: { type: 'string', description: 'Titre du document' },
+          contenu: { type: 'string', description: 'Contenu complet du document en markdown (titres ##, listes, tableaux, références)' },
+        },
+        required: ['titre', 'contenu'],
+      },
+    },
+  ];
 
   const readableStream = new ReadableStream({
     async start(controller) {
@@ -218,7 +233,6 @@ Règles :
               const query = String(toolUse.input.query ?? '');
               const nb = typeof toolUse.input.nb === 'number' ? toolUse.input.nb : 5;
 
-              // Signal de statut visible + keepalive pendant la recherche CrossRef
               encode(`\n__STATUS__Recherche CrossRef : "${query}"...__STATUS_END__\n`);
 
               const articles = await rechercherCrossRef(query, nb);
@@ -237,6 +251,19 @@ Règles :
                 type: 'tool_result',
                 tool_use_id: toolUse.id,
                 content: resultText,
+              });
+
+            } else if (toolUse.name === 'generer_document_word') {
+              const titre = String(toolUse.input.titre ?? 'Document');
+              const contenu = String(toolUse.input.contenu ?? '');
+
+              // Transmettre le contenu au client via un signal spécial
+              encode(`\n__WORD_DOC__${JSON.stringify({ titre, contenu })}__WORD_DOC_END__\n`);
+
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: toolUse.id,
+                content: `Document Word "${titre}" transmis au client pour téléchargement.`,
               });
             }
           }
