@@ -108,8 +108,15 @@ Règles :
 - Quand l'étudiant demande des articles ou de la littérature, utilise TOUJOURS l'outil rechercher_articles
 - Sois précis, encourageant, et adapte ton niveau au contexte académique
 - Si on te demande qui tu es : tu es "l'Agent IA de MaThèse"
-- Quand l'étudiant demande un document Word, un rapport complet, une synthèse à télécharger : utilise l'outil generer_document_word avec le contenu complet en markdown. Écris d'abord une courte phrase d'introduction ("Je génère votre rapport Word..."), puis appelle l'outil. N'écris JAMAIS le contenu du document directement dans le chat.
-- Pour les réponses normales (questions, explications, analyses courtes), réponds directement dans le chat en markdown. __PROPOSE_WORD__ n'est plus utilisé.`;
+
+
+⚠️ RÈGLE ABSOLUE — GÉNÉRATION DE DOCUMENT WORD :
+Si l'étudiant demande : un rapport, un document Word, une synthèse complète, un document à télécharger, "donne-moi le document", "génère le fichier"... tu DOIS obligatoirement :
+1. Écrire UNIQUEMENT : "Je génère votre document Word, veuillez patienter un instant... 📄"
+2. APPELER IMMÉDIATEMENT l'outil generer_document_word avec :
+   - titre : le titre du document
+   - contenu : tout le contenu complet du document en markdown (introduction, développement, conclusion, références)
+Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères pas le fichier Word via l'outil, le document ne sera JAMAIS créé.`;
 
   const tools: Anthropic.Tool[] = [
     {

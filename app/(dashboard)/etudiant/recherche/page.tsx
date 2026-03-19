@@ -491,7 +491,16 @@ export default function RecherchePage() {
       const proposeWord = visibleFinal.includes('__PROPOSE_WORD__');
       visibleFinal = visibleFinal.replace(/\n*__PROPOSE_WORD__\n*/g, '').trim();
 
-      const assistantMsg: ChatMessage = { role: 'assistant', content: visibleFinal, proposeWord, wordDoc };
+      // Fallback : si Claude dit "je génère" mais n'a pas appelé l'outil,
+      // on détecte l'intention et on montre le bouton de génération Word
+      const intentionWord = !wordDoc && /je génère|je prépare|document word|rapport word/i.test(visibleFinal);
+
+      const assistantMsg: ChatMessage = {
+        role: 'assistant',
+        content: visibleFinal,
+        proposeWord: proposeWord || intentionWord,
+        wordDoc,
+      };
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = assistantMsg;
@@ -813,15 +822,21 @@ export default function RecherchePage() {
                           sujet={profile?.sujet_recherche ?? ''}
                         />
                       )}
-                      {msg.proposeWord && !msg.wordDoc && (
-                        <div className="mt-3 pt-3 border-t border-gray-100">
-                          <button onClick={() => exporterWord(msg.content, i)} disabled={exportingWord === i}
-                            className="flex items-center gap-2 text-xs text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 px-4 py-2 rounded-xl font-medium transition-colors shadow-sm">
-                            {exportingWord === i ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
-                            {exportingWord === i ? 'Génération...' : 'Télécharger en Word (.docx)'}
-                          </button>
-                        </div>
-                      )}
+                      {msg.proposeWord && !msg.wordDoc && (() => {
+                        // Chercher le meilleur contenu : message long ou message précédent
+                        const prevLongMsg = messages.slice(0, i).filter(m => m.role === 'assistant' && m.content.length > 300).pop();
+                        const docContenu = msg.content.length > 300 ? msg.content : (prevLongMsg?.content ?? msg.content);
+                        const prevUserMsg = messages.slice(0, i).filter(m => m.role === 'user').pop();
+                        const docTitre = prevUserMsg?.content.slice(0, 70) ?? (profile?.sujet_recherche ?? 'Document');
+                        return (
+                          <WordDocWidget
+                            titre={docTitre}
+                            contenu={docContenu}
+                            auteur={[profile?.prenom, profile?.nom].filter(Boolean).join(' ') || undefined}
+                            sujet={profile?.sujet_recherche ?? ''}
+                          />
+                        );
+                      })()}
                     </>
                   ) : (
                     <span className="flex items-center gap-1.5 text-gray-400 text-xs py-1">
