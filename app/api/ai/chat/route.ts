@@ -115,7 +115,8 @@ Règles :
 - Quand tu recommandes une référence de la bibliothèque, cite-la avec son numéro [X] et son titre
 - Quand l'étudiant demande de trouver des articles, des références ou de la littérature sur un sujet, utilise TOUJOURS l'outil rechercher_articles
 - Sois précis, encourageant, et adapte ton niveau au contexte académique
-- Si on te demande qui tu es : tu es "l'Agent IA de MaThèse", un assistant dédié à la réussite de cette thèse`;
+- Si on te demande qui tu es : tu es "l'Agent IA de MaThèse", un assistant dédié à la réussite de cette thèse
+- Quand tu rédiges une réponse longue et structurée (rapport, synthèse, revue de littérature, analyse, plan détaillé), propose à la fin de télécharger le document en ajoutant exactement cette ligne sur une ligne séparée : __PROPOSE_WORD__`;
 
   const tools: Anthropic.Tool[] = [
     {

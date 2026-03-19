@@ -36,6 +36,7 @@ interface ArticleCrossRef {
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  proposeWord?: boolean;
 }
 
 // ─── Composant table avec copie ───────────────────────────────────────────────
@@ -272,7 +273,8 @@ export default function RecherchePage() {
         fullText += decoder.decode(value, { stream: true });
 
         const separatorIdx = fullText.indexOf('\n\n__SEARCH_RESULTS__');
-        const visibleText = separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText;
+        const visibleText = (separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText)
+          .replace(/\n*__PROPOSE_WORD__\n*/g, '');
 
         setMessages((prev) => {
           const updated = [...prev];
@@ -295,10 +297,13 @@ export default function RecherchePage() {
         }
       }
 
-      const visibleFinal = separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText;
+      let visibleFinal = separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText;
+      const proposeWord = visibleFinal.includes('__PROPOSE_WORD__');
+      visibleFinal = visibleFinal.replace(/\n*__PROPOSE_WORD__\n*/g, '').trim();
+
       setMessages((prev) => {
         const updated = [...prev];
-        updated[updated.length - 1] = { role: 'assistant', content: visibleFinal };
+        updated[updated.length - 1] = { role: 'assistant', content: visibleFinal, proposeWord };
         return updated;
       });
 
@@ -438,7 +443,23 @@ export default function RecherchePage() {
                   {msg.role === 'user' ? (
                     <span className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</span>
                   ) : msg.content ? (
-                    <MarkdownMessage content={msg.content} />
+                    <>
+                      <MarkdownMessage content={msg.content} />
+                      {msg.proposeWord && (
+                        <div className="mt-3 pt-3 border-t border-gray-100">
+                          <button
+                            onClick={() => exporterWord(msg.content, i)}
+                            disabled={exportingWord === i}
+                            className="flex items-center gap-2 text-xs text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 px-4 py-2 rounded-xl font-medium transition-colors shadow-sm"
+                          >
+                            {exportingWord === i
+                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              : <FileDown className="w-3.5 h-3.5" />}
+                            {exportingWord === i ? 'Génération...' : 'Télécharger en Word (.docx)'}
+                          </button>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <span className="flex items-center gap-1.5 text-gray-400 text-xs py-1">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -458,16 +479,6 @@ export default function RecherchePage() {
                       title="Copier la réponse"
                     >
                       {copiedId === i ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                    <button
-                      onClick={() => exporterWord(msg.content, i)}
-                      disabled={exportingWord === i}
-                      className="p-1.5 text-gray-300 hover:text-blue-500 transition-colors disabled:opacity-50"
-                      title="Exporter en Word (.docx)"
-                    >
-                      {exportingWord === i
-                        ? <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
-                        : <FileDown className="w-3.5 h-3.5" />}
                     </button>
                   </div>
                 )}
