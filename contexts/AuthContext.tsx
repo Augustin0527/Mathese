@@ -1,25 +1,22 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User, onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase/config';
+import { Session, User } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase/client';
 
 export interface UserProfile {
-  uid: string;
+  id: string;
   email: string;
   role: 'etudiant' | 'directeur';
   nom: string;
   prenom: string;
   pseudo?: string;
-  photoURL?: string;
+  photo_url?: string;
   niveau?: 'Master' | 'Doctorat' | 'Post-doctorat' | 'Chercheur';
   institution?: string;
-  sujetRecherche?: string;
-  directeurId?: string;
-  codirecteurId?: string;
-  pairs?: string[];
-  profilComplet?: boolean;
+  sujet_recherche?: string;
+  directeur_id?: string;
+  profil_complet?: boolean;
 }
 
 interface AuthContextType {
@@ -45,34 +42,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function fetchProfile(uid: string) {
     try {
-      const snap = await getDoc(doc(db, 'utilisateurs', uid));
-      if (snap.exists()) {
-        setProfile(snap.data() as UserProfile);
+      const { data, error } = await supabase
+        .from('utilisateurs')
+        .select('*')
+        .eq('id', uid)
+        .maybeSingle();
+      if (error) {
+        console.error('[AuthContext] fetchProfile error:', error.message);
+        return;
       }
-    } catch {
-      // ignore
+      if (data) setProfile(data as UserProfile);
+    } catch (err) {
+      console.error('[AuthContext] fetchProfile error:', err);
     }
   }
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoading(false); // immédiat — ne pas attendre Firestore
-      if (u) {
-        fetchProfile(u.uid); // chargement en arrière-plan
-      } else {
-        setProfile(null);
-      }
+    // Récupérer la session existante
+    supabase.auth.getSession().then(({ data: { session } }: { data: { session: Session | null } }) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+      if (session?.user) fetchProfile(session.user.id);
     });
-    return unsub;
+
+    // Écouter les changements d'état d'authentification
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event: string, session: Session | null) => {
+        setUser(session?.user ?? null);
+        if (session?.user) {
+          fetchProfile(session.user.id);
+        } else {
+          setProfile(null);
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
   }, []);
 
   async function refreshProfile() {
-    if (user) await fetchProfile(user.uid);
+    if (user) await fetchProfile(user.id);
   }
 
   async function signOut() {
-    await firebaseSignOut(auth);
+    await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
   }

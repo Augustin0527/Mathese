@@ -102,10 +102,10 @@ export default function Sidebar() {
           href="/profil"
           className="flex items-center gap-2.5 px-3 py-2 mb-1 rounded-lg hover:bg-gray-50 transition-colors group"
         >
-          {profile?.photoURL ? (
+          {profile?.photo_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={profile.photoURL}
+              src={profile.photo_url}
               alt="avatar"
               className="w-7 h-7 rounded-full object-cover flex-shrink-0"
             />

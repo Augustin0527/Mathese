@@ -1,16 +1,13 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import {
-  collection, addDoc, serverTimestamp, onSnapshot, query, orderBy,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   Search, Send, Loader2, Sparkles, BookOpen, ExternalLink,
-  Plus, CheckCircle2, ChevronDown, ChevronUp, LibraryBig, AlertCircle,
+  Plus, CheckCircle2, ChevronDown, ChevronUp, LibraryBig, AlertCircle, Copy, Check,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -32,6 +29,11 @@ interface ArticleResultat {
 interface ArticleBiblio {
   id: string;
   titre: string;
+  auteurs?: string[];
+  annee?: number | null;
+  doi?: string;
+  abstract?: string;
+  notes?: string;
 }
 
 interface ChatMessage {
@@ -57,6 +59,7 @@ export default function RecherchePage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -71,14 +74,16 @@ export default function RecherchePage() {
   const [ajoutTousLoading, setAjoutTousLoading] = useState(false);
   const [tableVisible, setTableVisible] = useState(true);
 
-  // Charger la bibliothèque existante depuis Firestore
+  // Charger la bibliothèque existante depuis Supabase
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, 'utilisateurs', user.uid, 'articles'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      setBiblioExistante(snap.docs.map((d) => ({ id: d.id, titre: d.data().titre ?? '' })));
-    });
-    return unsub;
+    supabase
+      .from('articles')
+      .select('id, titre, auteurs, annee, doi, abstract, notes')
+      .eq('user_id', user.id)
+      .then(({ data }) => {
+        if (data) setBiblioExistante(data as ArticleBiblio[]);
+      });
   }, [user]);
 
   useEffect(() => {
@@ -121,7 +126,8 @@ export default function RecherchePage() {
         signal: controller.signal,
         body: JSON.stringify({
           messages: newMessages,
-          sujetThese: profile?.sujetRecherche ?? '',
+          sujetThese: profile?.sujet_recherche ?? '',
+          bibliotheque: biblioExistante,
         }),
       });
 
@@ -203,16 +209,16 @@ export default function RecherchePage() {
   // ── Ajouter un article à la bibliothèque ────────────────────────────────
   async function ajouterArticle(article: ArticleResultat) {
     if (!user || ajoutes.has(article.id) || article.dejaDisponible) return;
-    await addDoc(collection(db, 'utilisateurs', user.uid, 'articles'), {
+    await supabase.from('articles').insert({
+      user_id: user.id,
       titre: article.titre,
-      auteurs: article.auteurs,
-      annee: article.annee,
+      auteurs: article.auteurs ? [article.auteurs] : [],
+      annee: article.annee ? Number(article.annee) : null,
       doi: article.doi ?? '',
       url: article.urlPdf ?? '',
       notes: article.apport,
       tags: [],
       lu: false,
-      createdAt: serverTimestamp(),
     });
     setAjoutes((prev) => new Set(prev).add(article.id));
   }
@@ -239,15 +245,15 @@ export default function RecherchePage() {
       <div className="flex flex-col w-full lg:w-[42%] min-h-0 border-r border-gray-100 flex-shrink-0">
         {/* En-tête */}
         <div className="flex-shrink-0 px-5 py-3.5 border-b border-gray-100 bg-white">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-indigo-50 rounded-lg flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-indigo-600" />
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0">
+              <Sparkles className="w-4 h-4 text-white" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-gray-900">Chat IA</p>
+              <p className="text-sm font-semibold text-gray-900">Agent IA de MaThèse</p>
               <p className="text-xs text-gray-400">
                 {biblioExistante.length > 0
-                  ? `${biblioExistante.length} article${biblioExistante.length > 1 ? 's' : ''} dans votre bibliothèque`
+                  ? `Accès à votre bibliothèque · ${biblioExistante.length} référence${biblioExistante.length > 1 ? 's' : ''}`
                   : 'Posez vos questions de recherche'}
               </p>
             </div>
@@ -258,19 +264,23 @@ export default function RecherchePage() {
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 min-h-0">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center py-8 px-4">
-              <p className="text-sm text-gray-400 max-w-xs leading-relaxed">
-                Discutez avec l&apos;IA sur votre sujet, explorez des concepts ou demandez de l&apos;aide pour structurer vos idées.
+              <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-2xl flex items-center justify-center mb-3 shadow-sm">
+                <Sparkles className="w-6 h-6 text-white" />
+              </div>
+              <p className="text-sm font-medium text-gray-700 mb-0.5">Agent IA de MaThèse</p>
+              <p className="text-xs text-gray-400 max-w-xs leading-relaxed mb-5">
+                Votre assistant personnel a accès à votre bibliothèque et peut vous recommander des références.
               </p>
-              <div className="flex flex-col gap-2 mt-5 w-full max-w-xs">
+              <div className="flex flex-col gap-2 w-full max-w-xs">
                 {[
+                  'Quelles références de ma bibliothèque sont liées à ma problématique ?',
                   'Comment structurer ma revue de littérature ?',
-                  'Quelles méthodes qualitatives pour mon sujet ?',
-                  'Quels cadres théoriques mobiliser ?',
+                  'Quels cadres théoriques mobiliser pour mon sujet ?',
                 ].map((s) => (
                   <button
                     key={s}
                     onClick={() => setInput(s)}
-                    className="text-left text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-2 rounded-lg transition-colors"
+                    className="text-left text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-2.5 rounded-xl transition-colors border border-indigo-100"
                   >
                     {s}
                   </button>
@@ -280,37 +290,60 @@ export default function RecherchePage() {
           )}
 
           {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`max-w-[90%] rounded-2xl text-sm ${
-                  msg.role === 'user'
-                    ? 'bg-indigo-600 text-white px-4 py-2.5 rounded-br-sm'
-                    : 'bg-gray-50 border border-gray-100 px-4 py-3 rounded-bl-sm'
-                }`}
-              >
-                {msg.role === 'user' ? (
-                  <span className="whitespace-pre-wrap">{msg.content}</span>
-                ) : msg.content ? (
-                  <div className="prose prose-sm max-w-none
-                    prose-headings:font-semibold prose-headings:text-gray-900 prose-headings:mt-3 prose-headings:mb-1
-                    prose-h1:text-base prose-h2:text-sm prose-h3:text-sm
-                    prose-p:text-gray-800 prose-p:my-1 prose-p:leading-relaxed
-                    prose-li:text-gray-800 prose-li:my-0.5
-                    prose-strong:text-gray-900 prose-strong:font-semibold
-                    prose-table:text-xs prose-td:px-2 prose-td:py-1 prose-th:px-2 prose-th:py-1 prose-th:bg-gray-100
-                    prose-code:text-indigo-700 prose-code:bg-indigo-50 prose-code:px-1 prose-code:rounded prose-code:text-xs
-                    prose-pre:bg-gray-100 prose-pre:rounded-lg prose-pre:p-3
-                    prose-blockquote:border-indigo-300 prose-blockquote:text-gray-600
-                    prose-hr:border-gray-200">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {msg.content}
-                    </ReactMarkdown>
+            <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} gap-1`}>
+              {msg.role === 'assistant' && (
+                <div className="flex items-center gap-1.5 px-1">
+                  <div className="w-4 h-4 bg-gradient-to-br from-indigo-500 to-violet-600 rounded flex items-center justify-center">
+                    <Sparkles className="w-2.5 h-2.5 text-white" />
                   </div>
-                ) : (
-                  <span className="flex items-center gap-1.5 text-gray-400 text-xs">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Réflexion...
-                  </span>
+                  <span className="text-xs font-medium text-gray-500">Agent IA</span>
+                </div>
+              )}
+              <div className={`flex items-end gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                <div
+                  className={`max-w-[90%] rounded-2xl text-sm ${
+                    msg.role === 'user'
+                      ? 'bg-gradient-to-br from-indigo-600 to-violet-600 text-white px-4 py-2.5 rounded-br-sm shadow-sm'
+                      : 'bg-white border border-gray-100 px-4 py-3 rounded-bl-sm shadow-sm'
+                  }`}
+                >
+                  {msg.role === 'user' ? (
+                    <span className="whitespace-pre-wrap">{msg.content}</span>
+                  ) : msg.content ? (
+                    <div className="prose prose-sm max-w-none
+                      prose-headings:font-semibold prose-headings:text-gray-900 prose-headings:mt-3 prose-headings:mb-1
+                      prose-h1:text-base prose-h2:text-sm prose-h3:text-sm
+                      prose-p:text-gray-800 prose-p:my-1 prose-p:leading-relaxed
+                      prose-li:text-gray-800 prose-li:my-0.5
+                      prose-strong:text-gray-900 prose-strong:font-semibold
+                      prose-table:text-xs prose-td:px-2 prose-td:py-1 prose-th:px-2 prose-th:py-1 prose-th:bg-indigo-50
+                      prose-code:text-indigo-700 prose-code:bg-indigo-50 prose-code:px-1 prose-code:rounded prose-code:text-xs
+                      prose-pre:bg-gray-50 prose-pre:rounded-xl prose-pre:p-3 prose-pre:border prose-pre:border-gray-100
+                      prose-blockquote:border-l-indigo-400 prose-blockquote:bg-indigo-50 prose-blockquote:px-3 prose-blockquote:py-1 prose-blockquote:rounded-r-lg prose-blockquote:text-indigo-800
+                      prose-hr:border-gray-100">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-gray-400 text-xs">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Réflexion...
+                    </span>
+                  )}
+                </div>
+                {msg.role === 'assistant' && msg.content && (
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(msg.content);
+                      setCopiedId(i);
+                      setTimeout(() => setCopiedId(null), 2000);
+                    }}
+                    className="mb-1 p-1 text-gray-300 hover:text-gray-500 transition-colors flex-shrink-0"
+                    title="Copier"
+                  >
+                    {copiedId === i ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
                 )}
               </div>
             </div>
@@ -552,7 +585,7 @@ export default function RecherchePage() {
             <div className="flex flex-col items-center justify-center h-full text-center py-12">
               <BookOpen className="w-10 h-10 text-gray-200 mb-3" />
               <p className="text-sm text-gray-400">Entrez un sujet pour trouver des articles</p>
-              <p className="text-xs text-gray-300 mt-1">Sources : Semantic Scholar · Analyse par Claude</p>
+              <p className="text-xs text-gray-300 mt-1">Sources : Semantic Scholar · Analyse par Agent IA de MaThèse</p>
               {biblioExistante.length > 0 && (
                 <p className="text-xs text-indigo-400 mt-2">
                   L&apos;IA connaît vos {biblioExistante.length} articles existants

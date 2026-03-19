@@ -87,6 +87,22 @@ Donne-lui un retour encourageant et une suggestion concrète pour la prochaine s
   return block.type === 'text' ? block.text : '';
 }
 
+// ── Traduction en français ───────────────────────────────────
+export async function traduireEnFrancais(texte: string): Promise<string> {
+  const message = await claude.messages.create({
+    model: MODEL,
+    max_tokens: 1024,
+    messages: [
+      {
+        role: 'user',
+        content: `Traduis ce texte académique en français. Réponds uniquement avec la traduction, sans commentaire.\n\n${texte}`,
+      },
+    ],
+  });
+  const block = message.content[0];
+  return block.type === 'text' ? block.text : '';
+}
+
 // ── Rapport hebdomadaire pour le directeur ──────────────────
 export async function rapportHebdomadaire(
   nomEtudiant: string,

@@ -2,40 +2,25 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase/config';
+import { supabase } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2, Loader2, Eye, EyeOff } from 'lucide-react';
 import type { Role } from '@/types';
 
 function getErreurMessage(code: string): string {
-  switch (code) {
-    case 'auth/email-already-in-use':
-      return 'Cet email est déjà associé à un compte. Connectez-vous plutôt.';
-    case 'auth/weak-password':
-      return 'Le mot de passe doit contenir au moins 6 caractères.';
-    case 'auth/invalid-email':
-      return 'Adresse email invalide.';
-    case 'auth/network-request-failed':
-      return 'Problème de connexion réseau. Réessayez.';
-    case 'auth/too-many-requests':
-      return 'Trop de tentatives. Réessayez dans quelques minutes.';
-    case 'timeout':
-      return 'La connexion est lente. Votre compte a été créé — connectez-vous directement.';
-    default:
-      return 'Une erreur est survenue. Vérifiez vos informations.';
+  if (code.includes('already registered') || code.includes('already been registered')) {
+    return 'Cet email est déjà associé à un compte. Connectez-vous plutôt.';
   }
-}
-
-// Timeout wrapper pour éviter que setDoc ne bloque à l'infini
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject({ code: 'timeout' }), ms)
-    ),
-  ]);
+  if (code.includes('weak_password') || code.includes('password')) {
+    return 'Le mot de passe doit contenir au moins 6 caractères.';
+  }
+  if (code.includes('invalid_email') || code.includes('email')) {
+    return 'Adresse email invalide.';
+  }
+  if (code.includes('network') || code.includes('fetch')) {
+    return 'Problème de connexion réseau. Réessayez.';
+  }
+  return 'Une erreur est survenue. Vérifiez vos informations.';
 }
 
 export default function InscriptionPage() {
@@ -55,7 +40,6 @@ export default function InscriptionPage() {
     e.preventDefault();
     setErreur('');
 
-    // Validation mot de passe
     if (motDePasse !== confirmation) {
       setErreur('Les mots de passe ne correspondent pas.');
       return;
@@ -67,47 +51,27 @@ export default function InscriptionPage() {
 
     setEtape('chargement');
     try {
-      // 1. Créer le compte Firebase Auth
-      const { user } = await createUserWithEmailAndPassword(auth, email, motDePasse);
+      // 1. Créer le compte Supabase Auth
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password: motDePasse,
+        options: {
+          data: { nom, prenom, role },
+        },
+      });
 
-      // 2. Mettre à jour le display name
-      await updateProfile(user, { displayName: `${prenom} ${nom}` });
+      if (signUpError) throw signUpError;
+      if (!data.user) throw new Error('Aucun utilisateur retourné');
 
-      // 3. Créer le document Firestore avec timeout de 8 secondes
-      //    Si ça timeout, le compte est quand même créé — l'utilisateur peut se connecter
-      try {
-        await withTimeout(
-          setDoc(doc(db, 'utilisateurs', user.uid), {
-            uid: user.uid,
-            email,
-            nom,
-            prenom,
-            role,
-            profilComplet: false,
-            createdAt: serverTimestamp(),
-          }),
-          8000
-        );
-      } catch (firestoreErr: unknown) {
-        const fsCode = (firestoreErr as { code?: string })?.code ?? '';
-        if (fsCode === 'timeout') {
-          // setDoc a pris trop de temps, mais le compte Auth est créé
-          // On redirige quand même — le profil Firestore sera créé à la prochaine connexion
-          setEtape('succes');
-          setTimeout(() => router.push('/connexion'), 1500);
-          return;
-        }
-        throw firestoreErr; // Autre erreur Firestore → catch principal
-      }
-
+      // Le profil est créé automatiquement par le trigger handle_new_user
       setEtape('succes');
       setTimeout(() => {
         router.push(role === 'directeur' ? '/directeur' : '/etudiant');
       }, 1500);
 
     } catch (err: unknown) {
-      const code = (err as { code?: string })?.code ?? '';
-      setErreur(getErreurMessage(code));
+      const msg = (err as { message?: string })?.message ?? '';
+      setErreur(getErreurMessage(msg));
       setEtape('formulaire');
     }
   }

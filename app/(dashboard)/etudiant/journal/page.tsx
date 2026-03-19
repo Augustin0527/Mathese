@@ -1,11 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import {
-  collection, addDoc, updateDoc, deleteDoc,
-  doc, onSnapshot, serverTimestamp, query, orderBy,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Calendar, Plus, Smile, Meh, Frown, Laugh, AlertCircle, Loader2 } from 'lucide-react';
 
@@ -14,10 +10,9 @@ interface EntreeJournal {
   date: string;
   accomplissements: string;
   blocages: string;
-  prochainePrioritee: string;
+  prochaine_priorite: string;
   humeur: 1 | 2 | 3 | 4 | 5;
-  tempsPomodoro: number;
-  createdAt?: unknown;
+  temps_pomodoro: number;
 }
 
 const HUMEURS = [
@@ -41,21 +36,26 @@ export default function JournalPage() {
 
   const [accomplissements, setAccomplissements] = useState('');
   const [blocages, setBlocages] = useState('');
-  const [prochainePrioritee, setProchainePrioritee] = useState('');
+  const [prochainePriorite, setProchainePriorite] = useState('');
   const [humeur, setHumeur] = useState<1 | 2 | 3 | 4 | 5>(3);
   const [tempsPomodoro, setTempsPomodoro] = useState(0);
 
   const aujourdhui = new Date().toISOString().split('T')[0];
 
-  useEffect(() => {
+  async function loadJournal() {
     if (!user) return;
-    const col = collection(db, 'utilisateurs', user.uid, 'journal');
-    const q = query(col, orderBy('date', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      setEntrees(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<EntreeJournal, 'id'>) })));
-      setLoading(false);
-    });
-    return unsub;
+    const { data } = await supabase
+      .from('journal')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('date', { ascending: false });
+    if (data) setEntrees(data as EntreeJournal[]);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    if (user) loadJournal();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const entreeAujourdhui = entrees.find((e) => e.date === aujourdhui);
@@ -65,24 +65,24 @@ export default function JournalPage() {
     setSaving(true);
     try {
       if (entreeAujourdhui) {
-        // Mettre à jour l'entrée existante du jour
-        await updateDoc(doc(db, 'utilisateurs', user.uid, 'journal', entreeAujourdhui.id), {
-          accomplissements, blocages, prochainePrioritee, humeur, tempsPomodoro,
-        });
+        await supabase.from('journal').update({
+          accomplissements, blocages, prochaine_priorite: prochainePriorite, humeur, temps_pomodoro: tempsPomodoro,
+        }).eq('id', entreeAujourdhui.id);
       } else {
-        await addDoc(collection(db, 'utilisateurs', user.uid, 'journal'), {
+        await supabase.from('journal').insert({
+          user_id: user.id,
           date: aujourdhui,
           accomplissements,
           blocages,
-          prochainePrioritee,
+          prochaine_priorite: prochainePriorite,
           humeur,
-          tempsPomodoro,
-          createdAt: serverTimestamp(),
+          temps_pomodoro: tempsPomodoro,
         });
       }
-      setAccomplissements(''); setBlocages(''); setProchainePrioritee('');
+      setAccomplissements(''); setBlocages(''); setProchainePriorite('');
       setHumeur(3); setTempsPomodoro(0);
       setShowForm(false);
+      loadJournal();
     } finally {
       setSaving(false);
     }
@@ -114,12 +114,9 @@ export default function JournalPage() {
         )}
       </div>
 
-      {/* Formulaire du jour */}
       {(showForm || (!entreeAujourdhui && entrees.length === 0)) && (
         <div className="bg-white border border-indigo-100 rounded-2xl p-6 mb-6 shadow-sm">
-          <h2 className="font-semibold text-gray-900 mb-1">
-            Bilan du {formatDate(aujourdhui)}
-          </h2>
+          <h2 className="font-semibold text-gray-900 mb-1">Bilan du {formatDate(aujourdhui)}</h2>
           <p className="text-sm text-gray-400 mb-4">Prenez 5 minutes pour faire le point</p>
 
           <div className="space-y-4">
@@ -137,9 +134,7 @@ export default function JournalPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Blocages ou difficultés rencontrées
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Blocages ou difficultés rencontrées</label>
               <textarea
                 value={blocages}
                 onChange={(e) => setBlocages(e.target.value)}
@@ -150,13 +145,11 @@ export default function JournalPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Priorité pour demain
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Priorité pour demain</label>
               <input
                 type="text"
-                value={prochainePrioritee}
-                onChange={(e) => setProchainePrioritee(e.target.value)}
+                value={prochainePriorite}
+                onChange={(e) => setProchainePriorite(e.target.value)}
                 placeholder="La chose la plus importante à faire demain..."
                 className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
@@ -181,9 +174,7 @@ export default function JournalPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Temps de travail (minutes Pomodoro)
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Temps de travail (minutes Pomodoro)</label>
               <input
                 type="number"
                 value={tempsPomodoro}
@@ -214,7 +205,6 @@ export default function JournalPage() {
         </div>
       )}
 
-      {/* Entrée du jour déjà faite */}
       {entreeAujourdhui && !showForm && (
         <div className="bg-green-50 border border-green-100 rounded-2xl p-4 mb-6 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -230,9 +220,9 @@ export default function JournalPage() {
             onClick={() => {
               setAccomplissements(entreeAujourdhui.accomplissements);
               setBlocages(entreeAujourdhui.blocages);
-              setProchainePrioritee(entreeAujourdhui.prochainePrioritee);
+              setProchainePriorite(entreeAujourdhui.prochaine_priorite);
               setHumeur(entreeAujourdhui.humeur);
-              setTempsPomodoro(entreeAujourdhui.tempsPomodoro);
+              setTempsPomodoro(entreeAujourdhui.temps_pomodoro);
               setShowForm(true);
             }}
             className="text-xs text-green-600 hover:text-green-800 underline flex-shrink-0"
@@ -242,7 +232,6 @@ export default function JournalPage() {
         </div>
       )}
 
-      {/* Historique */}
       <div className="space-y-4">
         {entrees.length > 0 && (
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Historique</h2>
@@ -257,13 +246,12 @@ export default function JournalPage() {
                   <span className="text-sm font-medium text-gray-700">{formatDate(entree.date)}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  {entree.tempsPomodoro > 0 && (
-                    <span className="text-xs text-gray-400">{entree.tempsPomodoro} min</span>
+                  {entree.temps_pomodoro > 0 && (
+                    <span className="text-xs text-gray-400">{entree.temps_pomodoro} min</span>
                   )}
                   <humeurData.icon className={`w-5 h-5 ${humeurData.color}`} />
                 </div>
               </div>
-
               <div className="space-y-2">
                 <div>
                   <p className="text-xs text-gray-400 mb-0.5">Accomplissements</p>
@@ -275,17 +263,16 @@ export default function JournalPage() {
                     <p className="text-sm text-orange-700">{entree.blocages}</p>
                   </div>
                 )}
-                {entree.prochainePrioritee && (
+                {entree.prochaine_priorite && (
                   <div>
                     <p className="text-xs text-gray-400 mb-0.5">Priorité demain</p>
-                    <p className="text-sm text-indigo-600 font-medium">→ {entree.prochainePrioritee}</p>
+                    <p className="text-sm text-indigo-600 font-medium">→ {entree.prochaine_priorite}</p>
                   </div>
                 )}
               </div>
             </div>
           );
         })}
-
         {entrees.length === 0 && !showForm && (
           <div className="text-center py-16 text-gray-400">
             <Calendar className="w-10 h-10 mx-auto mb-3 opacity-30" />

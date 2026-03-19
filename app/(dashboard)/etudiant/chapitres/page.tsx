@@ -1,11 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import {
-  collection, addDoc, updateDoc, deleteDoc,
-  doc, onSnapshot, serverTimestamp, query, orderBy,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Plus, BookOpen, Trash2, ChevronDown, ChevronUp, Loader2, GripVertical } from 'lucide-react';
 
@@ -16,18 +12,17 @@ interface Chapitre {
   titre: string;
   description?: string;
   statut: StatutChapitre;
-  nombreMots?: number;
-  objectifMots?: number;
+  nombre_mots?: number;
+  objectif_mots?: number;
   ordre: number;
   notes?: string;
-  createdAt?: unknown;
 }
 
-const STATUT_CONFIG: Record<StatutChapitre, { label: string; color: string; bg: string; dot: string }> = {
-  a_rediger: { label: 'À rédiger', color: 'text-gray-500', bg: 'bg-gray-100', dot: 'bg-gray-400' },
-  brouillon: { label: 'Brouillon', color: 'text-blue-600', bg: 'bg-blue-50', dot: 'bg-blue-500' },
-  revision: { label: 'En révision', color: 'text-orange-600', bg: 'bg-orange-50', dot: 'bg-orange-500' },
-  finalise: { label: 'Finalisé', color: 'text-green-600', bg: 'bg-green-50', dot: 'bg-green-500' },
+const STATUT_CONFIG: Record<StatutChapitre, { label: string; color: string; bg: string }> = {
+  a_rediger: { label: 'À rédiger', color: 'text-gray-500', bg: 'bg-gray-100' },
+  brouillon: { label: 'Brouillon', color: 'text-blue-600', bg: 'bg-blue-50' },
+  revision:  { label: 'En révision', color: 'text-orange-600', bg: 'bg-orange-50' },
+  finalise:  { label: 'Finalisé', color: 'text-green-600', bg: 'bg-green-50' },
 };
 
 export default function ChapitresPage() {
@@ -37,21 +32,25 @@ export default function ChapitresPage() {
   const [showForm, setShowForm] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Formulaire
   const [titre, setTitre] = useState('');
   const [description, setDescription] = useState('');
   const [objectifMots, setObjectifMots] = useState('');
   const [notes, setNotes] = useState('');
 
-  useEffect(() => {
+  async function loadChapitres() {
     if (!user) return;
-    const col = collection(db, 'utilisateurs', user.uid, 'chapitres');
-    const q = query(col, orderBy('ordre', 'asc'));
-    const unsub = onSnapshot(q, (snap) => {
-      setChapitres(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Chapitre, 'id'>) })));
-      setLoading(false);
-    });
-    return unsub;
+    const { data } = await supabase
+      .from('chapitres')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('ordre', { ascending: true });
+    if (data) setChapitres(data as Chapitre[]);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    if (user) loadChapitres();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   function resetForm() {
@@ -61,36 +60,37 @@ export default function ChapitresPage() {
 
   async function ajouterChapitre() {
     if (!user || !titre.trim()) return;
-    await addDoc(collection(db, 'utilisateurs', user.uid, 'chapitres'), {
+    await supabase.from('chapitres').insert({
+      user_id: user.id,
       titre,
       description,
-      statut: 'a_rediger' as StatutChapitre,
-      nombreMots: 0,
-      objectifMots: objectifMots ? Number(objectifMots) : null,
+      statut: 'a_rediger',
+      nombre_mots: 0,
+      objectif_mots: objectifMots ? Number(objectifMots) : null,
       notes,
       ordre: chapitres.length,
-      createdAt: serverTimestamp(),
     });
     resetForm();
+    loadChapitres();
   }
 
   async function changerStatut(id: string, statut: StatutChapitre) {
-    if (!user) return;
-    await updateDoc(doc(db, 'utilisateurs', user.uid, 'chapitres', id), { statut });
+    await supabase.from('chapitres').update({ statut }).eq('id', id);
+    loadChapitres();
   }
 
   async function mettreAJourMots(id: string, nombre: number) {
-    if (!user) return;
-    await updateDoc(doc(db, 'utilisateurs', user.uid, 'chapitres', id), { nombreMots: nombre });
+    await supabase.from('chapitres').update({ nombre_mots: nombre }).eq('id', id);
+    loadChapitres();
   }
 
   async function supprimerChapitre(id: string) {
-    if (!user) return;
-    await deleteDoc(doc(db, 'utilisateurs', user.uid, 'chapitres', id));
+    await supabase.from('chapitres').delete().eq('id', id);
+    loadChapitres();
   }
 
-  const totalMots = chapitres.reduce((acc, c) => acc + (c.nombreMots ?? 0), 0);
-  const totalObjectif = chapitres.reduce((acc, c) => acc + (c.objectifMots ?? 0), 0);
+  const totalMots = chapitres.reduce((acc, c) => acc + (c.nombre_mots ?? 0), 0);
+  const totalObjectif = chapitres.reduce((acc, c) => acc + (c.objectif_mots ?? 0), 0);
   const finalises = chapitres.filter((c) => c.statut === 'finalise').length;
 
   if (loading) {
@@ -122,7 +122,6 @@ export default function ChapitresPage() {
         </button>
       </div>
 
-      {/* Barre de progression globale */}
       {totalObjectif > 0 && (
         <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-6 shadow-sm">
           <div className="flex items-center justify-between mb-2">
@@ -140,7 +139,6 @@ export default function ChapitresPage() {
         </div>
       )}
 
-      {/* Formulaire d'ajout */}
       {showForm && (
         <div className="bg-white border border-gray-100 rounded-2xl p-6 mb-6 shadow-sm">
           <h2 className="font-semibold text-gray-900 mb-4">Nouveau chapitre</h2>
@@ -155,13 +153,11 @@ export default function ChapitresPage() {
               rows={2} placeholder="Description (optionnelle)"
               className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
-            <div className="flex gap-3">
-              <input
-                type="number" value={objectifMots} onChange={(e) => setObjectifMots(e.target.value)}
-                placeholder="Objectif de mots (ex: 5000)"
-                className="flex-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
+            <input
+              type="number" value={objectifMots} onChange={(e) => setObjectifMots(e.target.value)}
+              placeholder="Objectif de mots (ex: 5000)"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
             <textarea
               value={notes} onChange={(e) => setNotes(e.target.value)}
               rows={2} placeholder="Notes (plan, idées clés...)"
@@ -183,12 +179,11 @@ export default function ChapitresPage() {
         </div>
       )}
 
-      {/* Liste des chapitres */}
       <div className="space-y-3">
         {chapitres.map((ch, index) => {
           const cfg = STATUT_CONFIG[ch.statut];
-          const pct = ch.objectifMots && ch.objectifMots > 0
-            ? Math.min(100, Math.round(((ch.nombreMots ?? 0) / ch.objectifMots) * 100))
+          const pct = ch.objectif_mots && ch.objectif_mots > 0
+            ? Math.min(100, Math.round(((ch.nombre_mots ?? 0) / ch.objectif_mots) * 100))
             : null;
 
           return (
@@ -213,15 +208,12 @@ export default function ChapitresPage() {
                       <div className="mt-2">
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-xs text-gray-400">
-                            {(ch.nombreMots ?? 0).toLocaleString('fr-FR')} / {ch.objectifMots!.toLocaleString('fr-FR')} mots
+                            {(ch.nombre_mots ?? 0).toLocaleString('fr-FR')} / {ch.objectif_mots!.toLocaleString('fr-FR')} mots
                           </span>
                           <span className="text-xs font-medium text-indigo-600">{pct}%</span>
                         </div>
                         <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-indigo-500 rounded-full transition-all"
-                            style={{ width: `${pct}%` }}
-                          />
+                          <div className="h-full bg-indigo-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
                     )}
@@ -237,16 +229,10 @@ export default function ChapitresPage() {
                       <option value="revision">En révision</option>
                       <option value="finalise">Finalisé</option>
                     </select>
-                    <button
-                      onClick={() => supprimerChapitre(ch.id)}
-                      className="text-gray-300 hover:text-red-400 transition-colors p-1"
-                    >
+                    <button onClick={() => supprimerChapitre(ch.id)} className="text-gray-300 hover:text-red-400 transition-colors p-1">
                       <Trash2 className="w-4 h-4" />
                     </button>
-                    <button
-                      onClick={() => setExpandedId(expandedId === ch.id ? null : ch.id)}
-                      className="text-gray-400 hover:text-gray-600 transition-colors p-1"
-                    >
+                    <button onClick={() => setExpandedId(expandedId === ch.id ? null : ch.id)} className="text-gray-400 hover:text-gray-600 transition-colors p-1">
                       {expandedId === ch.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </button>
                   </div>
@@ -265,7 +251,7 @@ export default function ChapitresPage() {
                     <p className="text-xs font-medium text-gray-500 mb-1">Nombre de mots rédigés</p>
                     <input
                       type="number"
-                      defaultValue={ch.nombreMots ?? 0}
+                      defaultValue={ch.nombre_mots ?? 0}
                       min={0}
                       onBlur={(e) => mettreAJourMots(ch.id, Number(e.target.value))}
                       className="w-36 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"

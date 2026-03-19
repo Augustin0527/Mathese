@@ -2,29 +2,20 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase/config';
+import { supabase } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 
-function getErreurMessage(code: string): string {
-  switch (code) {
-    case 'auth/user-not-found':
-    case 'auth/wrong-password':
-    case 'auth/invalid-credential':
-      return 'Email ou mot de passe incorrect.';
-    case 'auth/invalid-email':
-      return 'Adresse email invalide.';
-    case 'auth/user-disabled':
-      return 'Ce compte a été désactivé.';
-    case 'auth/too-many-requests':
-      return 'Trop de tentatives. Réessayez dans quelques minutes.';
-    case 'auth/network-request-failed':
-      return 'Problème de connexion réseau. Réessayez.';
-    default:
-      return 'Impossible de se connecter. Vérifiez vos identifiants.';
+function getErreurMessage(msg: string): string {
+  if (msg.includes('Invalid login') || msg.includes('invalid_credentials')) {
+    return 'Email ou mot de passe incorrect.';
   }
+  if (msg.includes('email')) return 'Adresse email invalide.';
+  if (msg.includes('disabled')) return 'Ce compte a été désactivé.';
+  if (msg.includes('network') || msg.includes('fetch')) {
+    return 'Problème de connexion réseau. Réessayez.';
+  }
+  return 'Impossible de se connecter. Vérifiez vos identifiants.';
 }
 
 export default function ConnexionPage() {
@@ -42,19 +33,24 @@ export default function ConnexionPage() {
     setErreur('');
     setChargement(true);
     try {
-      const { user } = await signInWithEmailAndPassword(auth, email, motDePasse);
-      // Lire le rôle depuis Firestore pour rediriger vers le bon espace
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password: motDePasse });
+      if (error) throw error;
+
+      // Lire le rôle depuis la table utilisateurs
       let role = 'etudiant';
       try {
-        const snap = await getDoc(doc(db, 'utilisateurs', user.uid));
-        if (snap.exists()) role = snap.data().role ?? 'etudiant';
-      } catch {
-        // Si Firestore échoue, on va quand même sur l'espace étudiant par défaut
-      }
+        const { data: profil } = await supabase
+          .from('utilisateurs')
+          .select('role')
+          .eq('id', data.user.id)
+          .single();
+        if (profil?.role) role = profil.role;
+      } catch { /* si échec, aller sur espace étudiant par défaut */ }
+
       router.push(role === 'directeur' ? '/directeur' : '/etudiant');
     } catch (err: unknown) {
-      const code = (err as { code?: string })?.code ?? '';
-      setErreur(getErreurMessage(code));
+      const msg = (err as { message?: string })?.message ?? '';
+      setErreur(getErreurMessage(msg));
       setChargement(false);
     }
   }
@@ -66,7 +62,10 @@ export default function ConnexionPage() {
     }
     setResetChargement(true);
     try {
-      await sendPasswordResetEmail(auth, email);
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
       setResetEnvoi(true);
       setErreur('');
     } catch {

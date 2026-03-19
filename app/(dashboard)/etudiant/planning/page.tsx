@@ -1,11 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import {
-  collection, addDoc, updateDoc, deleteDoc,
-  doc, onSnapshot, serverTimestamp, query, orderBy,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Plus, CheckCircle2, Circle, Clock, AlertTriangle, ChevronDown, Trash2, Loader2 } from 'lucide-react';
 
@@ -16,23 +12,22 @@ interface Objectif {
   id: string;
   titre: string;
   description?: string;
-  dateEcheance: string;
+  date_echeance: string;
   statut: Statut;
   priorite: Priorite;
-  createdAt?: unknown;
 }
 
 const STATUT_CONFIG: Record<Statut, { label: string; color: string; bg: string }> = {
-  a_faire: { label: 'À faire', color: 'text-gray-500', bg: 'bg-gray-100' },
-  en_cours: { label: 'En cours', color: 'text-blue-600', bg: 'bg-blue-50' },
+  a_faire:  { label: 'À faire',  color: 'text-gray-500',  bg: 'bg-gray-100' },
+  en_cours: { label: 'En cours', color: 'text-blue-600',  bg: 'bg-blue-50' },
   complete: { label: 'Complété', color: 'text-green-600', bg: 'bg-green-50' },
-  reporte: { label: 'Reporté', color: 'text-orange-500', bg: 'bg-orange-50' },
+  reporte:  { label: 'Reporté',  color: 'text-orange-500',bg: 'bg-orange-50' },
 };
 
 const PRIORITE_CONFIG: Record<Priorite, { label: string; color: string }> = {
-  haute: { label: 'Haute', color: 'text-red-500' },
+  haute:   { label: 'Haute',   color: 'text-red-500' },
   moyenne: { label: 'Moyenne', color: 'text-orange-400' },
-  basse: { label: 'Basse', color: 'text-gray-400' },
+  basse:   { label: 'Basse',   color: 'text-gray-400' },
 };
 
 function estEnRetard(dateStr: string, statut: Statut) {
@@ -51,45 +46,51 @@ export default function PlanningPage() {
   const [dateEcheance, setDateEcheance] = useState('');
   const [priorite, setPriorite] = useState<Priorite>('moyenne');
 
-  useEffect(() => {
+  async function loadObjectifs() {
     if (!user) return;
-    const col = collection(db, 'utilisateurs', user.uid, 'objectifs');
-    const q = query(col, orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      setObjectifs(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Objectif, 'id'>) })));
-      setLoading(false);
-    });
-    return unsub;
+    const { data } = await supabase
+      .from('objectifs')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+    if (data) setObjectifs(data as Objectif[]);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    if (user) loadObjectifs();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   async function ajouterObjectif() {
     if (!user || !titre.trim() || !dateEcheance) return;
-    await addDoc(collection(db, 'utilisateurs', user.uid, 'objectifs'), {
+    await supabase.from('objectifs').insert({
+      user_id: user.id,
       titre,
       description,
-      dateEcheance,
-      statut: 'a_faire' as Statut,
+      date_echeance: dateEcheance,
+      statut: 'a_faire',
       priorite,
-      createdAt: serverTimestamp(),
     });
     setTitre(''); setDescription(''); setDateEcheance(''); setPriorite('moyenne');
     setShowForm(false);
+    loadObjectifs();
   }
 
   async function changerStatut(id: string, statut: Statut) {
-    if (!user) return;
-    await updateDoc(doc(db, 'utilisateurs', user.uid, 'objectifs', id), { statut });
+    await supabase.from('objectifs').update({ statut }).eq('id', id);
+    loadObjectifs();
   }
 
   async function supprimerObjectif(id: string) {
-    if (!user) return;
-    await deleteDoc(doc(db, 'utilisateurs', user.uid, 'objectifs', id));
+    await supabase.from('objectifs').delete().eq('id', id);
+    loadObjectifs();
   }
 
   const stats = {
     total: objectifs.length,
     complets: objectifs.filter((o) => o.statut === 'complete').length,
-    enRetard: objectifs.filter((o) => estEnRetard(o.dateEcheance, o.statut)).length,
+    enRetard: objectifs.filter((o) => estEnRetard(o.date_echeance, o.statut)).length,
   };
 
   const objectifsFiltres = filtreStatut === 'tous'
@@ -111,9 +112,7 @@ export default function PlanningPage() {
           <h1 className="text-2xl font-bold text-gray-900">Planning & Objectifs</h1>
           <p className="text-gray-500 text-sm mt-0.5">
             {stats.complets}/{stats.total} complétés
-            {stats.enRetard > 0 && (
-              <span className="text-red-500 ml-2">· {stats.enRetard} en retard</span>
-            )}
+            {stats.enRetard > 0 && <span className="text-red-500 ml-2">· {stats.enRetard} en retard</span>}
           </p>
         </div>
         <button
@@ -125,7 +124,6 @@ export default function PlanningPage() {
         </button>
       </div>
 
-      {/* Barre de progression */}
       {stats.total > 0 && (
         <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-6 shadow-sm">
           <div className="flex items-center justify-between mb-2">
@@ -143,7 +141,6 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {/* Formulaire */}
       {showForm && (
         <div className="bg-white border border-gray-100 rounded-2xl p-6 mb-6 shadow-sm">
           <h2 className="font-semibold text-gray-900 mb-4">Nouvel objectif</h2>
@@ -194,7 +191,6 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {/* Filtres */}
       <div className="flex gap-2 mb-4 flex-wrap">
         {(['tous', 'a_faire', 'en_cours', 'complete', 'reporte'] as const).map((f) => (
           <button
@@ -209,19 +205,16 @@ export default function PlanningPage() {
         ))}
       </div>
 
-      {/* Liste des objectifs */}
       <div className="space-y-3">
         {objectifsFiltres.map((objectif) => {
-          const enRetard = estEnRetard(objectif.dateEcheance, objectif.statut);
+          const enRetard = estEnRetard(objectif.date_echeance, objectif.statut);
           const statutCfg = STATUT_CONFIG[objectif.statut];
           const prioriteCfg = PRIORITE_CONFIG[objectif.priorite];
 
           return (
             <div
               key={objectif.id}
-              className={`bg-white border rounded-2xl p-4 shadow-sm transition-all ${
-                enRetard ? 'border-red-200' : 'border-gray-100'
-              }`}
+              className={`bg-white border rounded-2xl p-4 shadow-sm transition-all ${enRetard ? 'border-red-200' : 'border-gray-100'}`}
             >
               <div className="flex items-start gap-3">
                 <button
@@ -248,15 +241,12 @@ export default function PlanningPage() {
                   <div className="flex items-center gap-3 mt-2">
                     <div className={`flex items-center gap-1 text-xs ${enRetard ? 'text-red-500' : 'text-gray-400'}`}>
                       {enRetard ? <AlertTriangle className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
-                      {new Date(objectif.dateEcheance).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+                      {new Date(objectif.date_echeance).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
                       {enRetard && ' — En retard'}
                     </div>
-                    <span className={`text-xs font-medium ${prioriteCfg.color}`}>
-                      ● {prioriteCfg.label}
-                    </span>
+                    <span className={`text-xs font-medium ${prioriteCfg.color}`}>● {prioriteCfg.label}</span>
                   </div>
                 </div>
-
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   <div className="relative">
                     <select
@@ -271,10 +261,7 @@ export default function PlanningPage() {
                     </select>
                     <ChevronDown className="w-3 h-3 text-gray-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
-                  <button
-                    onClick={() => supprimerObjectif(objectif.id)}
-                    className="text-gray-300 hover:text-red-400 transition-colors p-1"
-                  >
+                  <button onClick={() => supprimerObjectif(objectif.id)} className="text-gray-300 hover:text-red-400 transition-colors p-1">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
@@ -287,7 +274,7 @@ export default function PlanningPage() {
           <div className="text-center py-16 text-gray-400">
             <CheckCircle2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
             <p className="text-sm">
-              {filtreStatut === 'tous' ? 'Aucun objectif pour l\'instant' : `Aucun objectif "${STATUT_CONFIG[filtreStatut as Statut]?.label}"`}
+              {filtreStatut === 'tous' ? "Aucun objectif pour l'instant" : `Aucun objectif "${STATUT_CONFIG[filtreStatut as Statut]?.label}"`}
             </p>
             {filtreStatut === 'tous' && (
               <p className="text-xs mt-1">Cliquez sur &ldquo;Nouvel objectif&rdquo; pour commencer</p>

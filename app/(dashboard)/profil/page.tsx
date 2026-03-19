@@ -1,26 +1,15 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { doc, updateDoc, collection, addDoc, getDocs, query, where, serverTimestamp, setDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '@/lib/firebase/config';
+import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Camera, Save, UserPlus, Mail, Check, X, Loader2, AlertCircle } from 'lucide-react';
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), ms)
-    ),
-  ]);
-}
 
 const NIVEAUX = ['Master', 'Doctorat', 'Post-doctorat', 'Chercheur'] as const;
 
 interface Invitation {
   id: string;
-  toEmail: string;
+  to_email: string;
   type: 'directeur' | 'codirecteur' | 'pair';
   status: 'en_attente' | 'acceptee' | 'refusee';
 }
@@ -28,7 +17,6 @@ interface Invitation {
 export default function ProfilPage() {
   const { user, profile, refreshProfile } = useAuth();
 
-  // Champs profil
   const [nom, setNom] = useState('');
   const [prenom, setPrenom] = useState('');
   const [pseudo, setPseudo] = useState('');
@@ -37,17 +25,14 @@ export default function ProfilPage() {
   const [sujetRecherche, setSujetRecherche] = useState('');
   const [photoURL, setPhotoURL] = useState('');
 
-  // Photo
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
-  // Invitations
   const [invitEmail, setInvitEmail] = useState('');
   const [invitType, setInvitType] = useState<'directeur' | 'codirecteur' | 'pair'>('directeur');
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [envoi, setEnvoi] = useState(false);
 
-  // Sauvegarde
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -59,34 +44,43 @@ export default function ProfilPage() {
       setPseudo(profile.pseudo ?? '');
       setNiveau((profile.niveau as typeof NIVEAUX[number]) ?? '');
       setInstitution(profile.institution ?? '');
-      setSujetRecherche(profile.sujetRecherche ?? '');
-      setPhotoURL(profile.photoURL ?? '');
+      setSujetRecherche(profile.sujet_recherche ?? '');
+      setPhotoURL(profile.photo_url ?? '');
     }
   }, [profile]);
 
   useEffect(() => {
-    if (!user) return;
-    loadInvitations();
+    if (user) loadInvitations();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   async function loadInvitations() {
     if (!user) return;
-    const q = query(collection(db, 'invitations'), where('fromUid', '==', user.uid));
-    const snap = await getDocs(q);
-    setInvitations(
-      snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Invitation, 'id'>) }))
-    );
+    const { data } = await supabase
+      .from('invitations')
+      .select('*')
+      .eq('from_uid', user.id);
+    if (data) setInvitations(data as Invitation[]);
   }
 
   async function uploadPhoto(file: File) {
     if (!user) return;
     setUploadingPhoto(true);
     try {
-      const storageRef = ref(storage, `avatars/${user.uid}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
-      setPhotoURL(url);
+      const ext = file.name.split('.').pop();
+      const path = `avatars/${user.id}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(path, file, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+      setPhotoURL(data.publicUrl);
+    } catch (err) {
+      console.error('[Profil] uploadPhoto error:', err);
+      setSaveError('Erreur lors de l\'upload de la photo.');
     } finally {
       setUploadingPhoto(false);
     }
@@ -98,22 +92,28 @@ export default function ProfilPage() {
     setSaving(true);
     setSaveError('');
     try {
-      const data = { nom, prenom, pseudo, niveau, institution, sujetRecherche, photoURL, profilComplet: true };
-      // Timeout de 8 secondes — si Firestore ne répond pas, on affiche une erreur claire
-      await withTimeout(
-        setDoc(doc(db, 'utilisateurs', user.uid), data, { merge: true }),
-        8000
-      );
+      const { error } = await supabase
+        .from('utilisateurs')
+        .update({
+          nom,
+          prenom,
+          pseudo,
+          niveau: niveau || null,
+          institution,
+          sujet_recherche: sujetRecherche,
+          photo_url: photoURL,
+          profil_complet: true,
+        })
+        .eq('id', user.id);
+
+      if (error) throw error;
+
       refreshProfile().catch(() => {});
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err: unknown) {
-      const msg = (err as Error)?.message ?? '';
-      if (msg === 'timeout') {
-        setSaveError('Connexion lente. Réessayez ou vérifiez votre réseau.');
-      } else {
-        setSaveError('Erreur lors de la sauvegarde. Réessayez.');
-      }
+      const msg = (err as { message?: string })?.message ?? 'inconnue';
+      setSaveError(`Erreur: ${msg}`);
     } finally {
       setSaving(false);
     }
@@ -124,13 +124,12 @@ export default function ProfilPage() {
     if (!user || !invitEmail.trim()) return;
     setEnvoi(true);
     try {
-      await addDoc(collection(db, 'invitations'), {
-        fromUid: user.uid,
-        fromNom: `${prenom} ${nom}`.trim(),
-        toEmail: invitEmail.trim().toLowerCase(),
+      await supabase.from('invitations').insert({
+        from_uid: user.id,
+        from_nom: `${prenom} ${nom}`.trim(),
+        to_email: invitEmail.trim().toLowerCase(),
         type: invitType,
         status: 'en_attente',
-        createdAt: serverTimestamp(),
       });
       setInvitEmail('');
       await loadInvitations();
@@ -327,7 +326,6 @@ export default function ProfilPage() {
           </div>
         </form>
 
-        {/* Liste des invitations envoyées */}
         {invitations.length > 0 && (
           <div className="mt-4 space-y-2">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
@@ -339,7 +337,7 @@ export default function ProfilPage() {
                 className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl text-sm"
               >
                 <Mail className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                <span className="flex-1 text-gray-700 truncate">{inv.toEmail}</span>
+                <span className="flex-1 text-gray-700 truncate">{inv.to_email}</span>
                 <span className="text-xs text-gray-400">{typeLabel[inv.type]}</span>
                 {inv.status === 'en_attente' ? (
                   <span className="text-xs bg-yellow-50 text-yellow-700 px-2 py-0.5 rounded-full">

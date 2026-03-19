@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpen, Timer, Target, FileText, TrendingUp, Calendar } from 'lucide-react';
+import { BookOpen, Timer, Target, FileText, TrendingUp, Calendar, Presentation } from 'lucide-react';
 import Link from 'next/link';
 
 const modules = [
@@ -9,6 +9,7 @@ const modules = [
   { href: '/etudiant/planning', icon: Target, label: 'Planning', desc: 'Objectifs & étapes', color: 'bg-green-50 text-green-600' },
   { href: '/etudiant/chapitres', icon: FileText, label: 'Chapitres', desc: 'Rédaction & feedback', color: 'bg-purple-50 text-purple-600' },
   { href: '/etudiant/journal', icon: Calendar, label: 'Journal', desc: 'Bilan quotidien', color: 'bg-pink-50 text-pink-600' },
+  { href: '/etudiant/communication', icon: Presentation, label: 'Communication', desc: 'Préparer une présentation', color: 'bg-violet-50 text-violet-600' },
 ];
 
 export default function EtudiantDashboard() {
@@ -51,14 +52,14 @@ export default function EtudiantDashboard() {
           </Link>
         ))}
 
-        {/* Progression */}
-        <div className="bg-indigo-600 rounded-2xl p-5 text-white">
+        {/* Agent IA */}
+        <Link href="/etudiant/recherche" className="bg-gradient-to-br from-indigo-600 to-violet-600 rounded-2xl p-5 text-white hover:from-indigo-700 hover:to-violet-700 transition-all group">
           <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center mb-3">
             <TrendingUp className="w-5 h-5 text-white" />
           </div>
-          <div className="font-semibold">Progression</div>
-          <div className="text-xs text-indigo-200 mt-0.5">Vue d&apos;ensemble</div>
-        </div>
+          <div className="font-semibold">Agent IA</div>
+          <div className="text-xs text-indigo-200 mt-0.5">Recherche & discussion</div>
+        </Link>
       </div>
     </div>
   );
