@@ -10,7 +10,7 @@ const features = [
   {
     icon: Brain,
     titre: "Analyse IA de vos chapitres",
-    desc: "Claude analyse votre rédaction et identifie les incohérences et lacunes bibliographiques.",
+    desc: "L'Agent IA analyse votre rédaction et identifie les incohérences et lacunes bibliographiques.",
   },
   {
     icon: Timer,
@@ -61,7 +61,7 @@ export default function LandingPage() {
       {/* Hero */}
       <section className="text-center py-24 px-6 max-w-4xl mx-auto">
         <div className="inline-block bg-indigo-50 text-indigo-700 text-sm font-medium px-3 py-1 rounded-full mb-6">
-          Propulsé par l&apos;IA Claude
+          Propulsé par l&apos;Agent IA de MaThèse
         </div>
         <h1 className="text-5xl font-bold text-gray-900 mb-6 leading-tight">
           Rédigez votre thèse avec{" "}
