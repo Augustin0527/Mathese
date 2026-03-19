@@ -170,7 +170,7 @@ export default function LandingPage() {
 
         <div className="inline-flex items-center gap-2 bg-indigo-50 text-indigo-700 text-sm font-medium px-4 py-1.5 rounded-full mb-8 border border-indigo-100">
           <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
-          Propulsé par l&apos;Agent IA de MaThèse
+          Propulsé par le consortium SFR-D, Africitizen &amp; École au Bénin
         </div>
 
         <h1 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6 leading-tight">
