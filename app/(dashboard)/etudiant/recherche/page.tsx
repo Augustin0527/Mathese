@@ -123,23 +123,18 @@ function WordDocWidget({ titre, userRequest, articles, auteur, sujet }: {
           <p className="text-xs text-gray-400 truncate">{titre}</p>
         </div>
       </div>
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex flex-col gap-2">
         <a
           href={downloadUrl!}
           download={filenameRef.current}
-          className="flex items-center gap-2 text-sm text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-xl font-medium transition-colors shadow-sm"
+          className="inline-flex items-center gap-2 text-sm text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-xl font-medium transition-colors shadow-sm w-fit"
         >
           <FileDown className="w-4 h-4" />
           Télécharger (.docx)
         </a>
-        <a
-          href={downloadUrl!}
-          download={filenameRef.current.replace('.docx', '_copie.docx')}
-          className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-4 py-2 rounded-xl font-medium transition-colors"
-        >
-          <ExternalLink className="w-4 h-4" />
-          Ouvrir avec Word
-        </a>
+        <p className="text-xs text-gray-400">
+          Après téléchargement, double-cliquez sur le fichier pour l'ouvrir dans Microsoft Word.
+        </p>
       </div>
     </div>
   );
