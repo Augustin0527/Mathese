@@ -50,7 +50,7 @@ async function rechercherCrossRef(query: string, nb = 5): Promise<ArticleCrossRe
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'MaThese/1.0 (contact@mathese.org)' },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return [];
     const data: CrossRefResponse = await res.json();
@@ -145,7 +145,7 @@ Règles :
 
           const stream = anthropic.messages.stream({
             model: 'claude-sonnet-4-6',
-            max_tokens: 4096,
+            max_tokens: 2500,
             system: systemPrompt,
             tools,
             messages: currentMessages,
@@ -208,6 +208,9 @@ Règles :
             if (toolUse.name === 'rechercher_articles') {
               const query = String(toolUse.input.query ?? '');
               const nb = typeof toolUse.input.nb === 'number' ? toolUse.input.nb : 5;
+
+              // Signal de statut visible + keepalive pendant la recherche CrossRef
+              encode(`\n__STATUS__Recherche CrossRef : "${query}"...__STATUS_END__\n`);
 
               const articles = await rechercherCrossRef(query, nb);
               foundArticles = [...foundArticles, ...articles];

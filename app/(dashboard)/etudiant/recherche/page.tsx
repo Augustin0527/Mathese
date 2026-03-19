@@ -189,6 +189,7 @@ export default function RecherchePage() {
   // ── Résultats IA ──
   const [articlesIA, setArticlesIA] = useState<ArticleCrossRef[]>([]);
   const [ajoutesIA, setAjoutesIA] = useState<Set<number>>(new Set());
+  const [searchingStatus, setSearchingStatus] = useState<string | null>(null);
 
   // ─── Chargements initiaux ────────────────────────────────────────────────
   useEffect(() => {
@@ -334,9 +335,18 @@ export default function RecherchePage() {
         if (done) break;
         fullText += decoder.decode(value, { stream: true });
 
+        // Détecter statut de recherche CrossRef
+        const statusMatch = fullText.match(/__STATUS__([^_]*)__STATUS_END__/);
+        if (statusMatch) {
+          setSearchingStatus(statusMatch[1]);
+        } else if (searchingStatus) {
+          setSearchingStatus(null);
+        }
+
         const separatorIdx = fullText.indexOf('\n\n__SEARCH_RESULTS__');
         const visibleText = (separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText)
-          .replace(/\n*__PROPOSE_WORD__\n*/g, '');
+          .replace(/\n*__PROPOSE_WORD__\n*/g, '')
+          .replace(/__STATUS__[^_]*__STATUS_END__\n?/g, '');
 
         setMessages((prev) => {
           const updated = [...prev];
@@ -356,7 +366,8 @@ export default function RecherchePage() {
         } catch { /* ignore */ }
       }
 
-      let visibleFinal = separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText;
+      let visibleFinal = (separatorIdx >= 0 ? fullText.slice(0, separatorIdx) : fullText)
+        .replace(/__STATUS__[^_]*__STATUS_END__\n?/g, '');
 
       // Détecter une erreur serveur signalée dans le stream
       if (visibleFinal.includes('__ERROR__')) {
@@ -404,6 +415,7 @@ export default function RecherchePage() {
       });
     } finally {
       setChatLoading(false);
+      setSearchingStatus(null);
       abortRef.current = null;
     }
   }
@@ -731,6 +743,14 @@ export default function RecherchePage() {
           ))}
           <div ref={chatEndRef} />
         </div>
+
+        {/* Bannière de statut CrossRef */}
+        {searchingStatus && (
+          <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-indigo-50 border-t border-indigo-100 text-xs text-indigo-600">
+            <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+            <span className="truncate">{searchingStatus}</span>
+          </div>
+        )}
 
         {/* Input */}
         <div className="flex-shrink-0 border-t border-gray-100 px-4 py-3 bg-white">
