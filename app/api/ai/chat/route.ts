@@ -228,11 +228,20 @@ Règles :
 
 
 ⚠️ RÈGLE ABSOLUE — GÉNÉRATION DE DOCUMENT WORD :
-Si l'étudiant demande : un rapport, un document Word, une synthèse complète, un document à télécharger, "donne-moi le document", "génère le fichier"... tu DOIS obligatoirement :
-1. Écrire UNIQUEMENT : "Je génère votre document Word, veuillez patienter un instant... 📄"
-2. APPELER IMMÉDIATEMENT l'outil generer_document_word avec :
-   - titre : le titre du document
-   - contenu : tout le contenu complet du document en markdown (introduction, développement, conclusion, références)
+Si l'étudiant demande : un rapport, un document Word, une synthèse, "reprends le document", "génère le fichier", "avec plus de références"...
+Tu DOIS obligatoirement DANS CET ORDRE :
+1. Si des références supplémentaires sont demandées : appeler rechercher_articles AVANT de générer le document
+2. Écrire UNIQUEMENT cette phrase : "Je génère votre document Word, veuillez patienter un instant... 📄"
+3. Appeler generer_document_word avec :
+   - titre : un VRAI TITRE ACADÉMIQUE COURT ET DESCRIPTIF du sujet traité
+     ✅ Exemples valides : "L'IMSE au Bénin : Défis et Perspectives", "Analyse des systèmes éducatifs en Afrique subsaharienne"
+     ❌ INTERDIT : la demande de l'étudiant comme titre ("reprends le document", "avec plus de références", etc.)
+     ❌ INTERDIT : une phrase de plus de 80 caractères
+   - contenu : un NOUVEAU DOCUMENT COMPLET rédigé en markdown incluant :
+     * Introduction, sections structurées (##), conclusion, références bibliographiques
+     * Les articles trouvés via rechercher_articles intégrés dans le corps et les références
+     * NE PAS copier-coller les messages précédents du chat — RÉDIGER un nouveau document complet et cohérent
+
 Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères pas le fichier Word via l'outil, le document ne sera JAMAIS créé.`;
 
   const tools: Anthropic.Tool[] = [
@@ -359,8 +368,14 @@ Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères p
               toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: resultText });
 
             } else if (toolUse.name === 'generer_document_word') {
-              const titre = String(toolUse.input.titre ?? 'Document');
+              let titre = String(toolUse.input.titre ?? 'Document');
               const contenu = String(toolUse.input.contenu ?? '');
+              // Sanitize : si le titre ressemble à une demande utilisateur (trop long ou commence par un verbe d'action),
+              // extraire un titre depuis le contenu markdown (première ligne H1/H2) ou utiliser un titre générique
+              if (titre.length > 100 || /^(reprends|génère|crée|fais|donne|avec|update|écris)/i.test(titre.trim())) {
+                const h1Match = contenu.match(/^#{1,2}\s+(.+)/m);
+                titre = h1Match ? h1Match[1].slice(0, 80) : 'Rapport académique';
+              }
 
               encode(`\n__WORD_DOC__${JSON.stringify({ titre, contenu })}__WORD_DOC_END__\n`);
 

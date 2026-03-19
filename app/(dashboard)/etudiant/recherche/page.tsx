@@ -489,17 +489,11 @@ export default function RecherchePage() {
         return;
       }
 
-      const proposeWord = visibleFinal.includes('__PROPOSE_WORD__');
       visibleFinal = visibleFinal.replace(/\n*__PROPOSE_WORD__\n*/g, '').trim();
-
-      // Fallback : si Claude dit "je génère" mais n'a pas appelé l'outil,
-      // on détecte l'intention et on montre le bouton de génération Word
-      const intentionWord = !wordDoc && /je génère|je prépare|document word|rapport word/i.test(visibleFinal);
 
       const assistantMsg: ChatMessage = {
         role: 'assistant',
         content: visibleFinal,
-        proposeWord: proposeWord || intentionWord,
         wordDoc,
       };
       setMessages((prev) => {
@@ -823,21 +817,6 @@ export default function RecherchePage() {
                           sujet={profile?.sujet_recherche ?? ''}
                         />
                       )}
-                      {msg.proposeWord && !msg.wordDoc && (() => {
-                        // Chercher le meilleur contenu : message long ou message précédent
-                        const prevLongMsg = messages.slice(0, i).filter(m => m.role === 'assistant' && m.content.length > 300).pop();
-                        const docContenu = msg.content.length > 300 ? msg.content : (prevLongMsg?.content ?? msg.content);
-                        const prevUserMsg = messages.slice(0, i).filter(m => m.role === 'user').pop();
-                        const docTitre = prevUserMsg?.content.slice(0, 70) ?? (profile?.sujet_recherche ?? 'Document');
-                        return (
-                          <WordDocWidget
-                            titre={docTitre}
-                            contenu={docContenu}
-                            auteur={[profile?.prenom, profile?.nom].filter(Boolean).join(' ') || undefined}
-                            sujet={profile?.sujet_recherche ?? ''}
-                          />
-                        );
-                      })()}
                     </>
                   ) : (
                     <span className="flex items-center gap-1.5 text-gray-400 text-xs py-1">
