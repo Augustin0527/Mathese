@@ -230,19 +230,13 @@ Règles :
 ⚠️ RÈGLE ABSOLUE — GÉNÉRATION DE DOCUMENT WORD :
 Si l'étudiant demande : un rapport, un document Word, une synthèse, "reprends le document", "génère le fichier", "avec plus de références"...
 Tu DOIS obligatoirement DANS CET ORDRE :
-1. Si des références supplémentaires sont demandées : appeler rechercher_articles AVANT de générer le document
-2. Écrire UNIQUEMENT cette phrase : "Je génère votre document Word, veuillez patienter un instant... 📄"
-3. Appeler generer_document_word avec :
-   - titre : un VRAI TITRE ACADÉMIQUE COURT ET DESCRIPTIF du sujet traité
-     ✅ Exemples valides : "L'IMSE au Bénin : Défis et Perspectives", "Analyse des systèmes éducatifs en Afrique subsaharienne"
-     ❌ INTERDIT : la demande de l'étudiant comme titre ("reprends le document", "avec plus de références", etc.)
-     ❌ INTERDIT : une phrase de plus de 80 caractères
-   - contenu : un NOUVEAU DOCUMENT COMPLET rédigé en markdown incluant :
-     * Introduction, sections structurées (##), conclusion, références bibliographiques
-     * Les articles trouvés via rechercher_articles intégrés dans le corps et les références
-     * NE PAS copier-coller les messages précédents du chat — RÉDIGER un nouveau document complet et cohérent
-
-Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères pas le fichier Word via l'outil, le document ne sera JAMAIS créé.`;
+1. Si des références sont demandées : appeler rechercher_articles AVANT
+2. Écrire UNIQUEMENT : "Je génère votre document Word, veuillez patienter un instant... 📄"
+3. Appeler generer_document_word avec UNIQUEMENT :
+   - titre : titre académique court (ex: "L'IMSE au Bénin : Défis et Perspectives")
+   ✅ Le contenu du document est généré AUTOMATIQUEMENT — tu n'as pas à l'écrire
+   ❌ INTERDIT : écrire le contenu du document dans le chat
+   ❌ INTERDIT : utiliser la demande de l'étudiant comme titre`;
 
   const tools: Anthropic.Tool[] = [
     {
@@ -259,14 +253,13 @@ Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères p
     },
     {
       name: 'generer_document_word',
-      description: "Génère un document Word (.docx) complet et structuré. À utiliser UNIQUEMENT quand l'étudiant demande un rapport, une synthèse, un document complet à télécharger. Le contenu en markdown est transmis directement au système de génération sans être affiché dans le chat.",
+      description: "Déclenche la génération d'un document Word. À utiliser UNIQUEMENT quand l'étudiant demande un rapport, une synthèse ou un document à télécharger. Le contenu sera généré automatiquement — tu n'as besoin de fournir QUE le titre.",
       input_schema: {
         type: 'object' as const,
         properties: {
-          titre: { type: 'string', description: 'Titre du document' },
-          contenu: { type: 'string', description: 'Contenu complet du document en markdown (titres ##, listes, tableaux, références)' },
+          titre: { type: 'string', description: 'Titre académique court et descriptif (ex: "L\'IMSE au Bénin : Défis et Perspectives")' },
         },
-        required: ['titre', 'contenu'],
+        required: ['titre'],
       },
     },
   ];
@@ -368,30 +361,18 @@ Tu NE DOIS PAS écrire le contenu du document dans le chat. Si tu ne génères p
               toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: resultText });
 
             } else if (toolUse.name === 'generer_document_word') {
-              let titre = String(toolUse.input.titre ?? 'Document');
-              const contenu = String(toolUse.input.contenu ?? '');
-
-              // Si le contenu est vide (JSON tronqué par max_tokens), signaler l'erreur
-              if (!contenu || contenu.trim().length < 100) {
-                encode('\n__WORD_DOC_ERROR__\n');
-                toolResults.push({
-                  type: 'tool_result',
-                  tool_use_id: toolUse.id,
-                  content: 'Erreur : le contenu du document est vide ou trop court.',
-                });
-              } else {
-                // Sanitize le titre si c'est un message utilisateur brut
-                if (titre.length > 100 || /^(reprends|génère|crée|fais|donne|avec|update|écris)/i.test(titre.trim())) {
-                  const h1Match = contenu.match(/^#{1,2}\s+(.+)/m);
-                  titre = h1Match ? h1Match[1].slice(0, 80) : 'Rapport académique';
-                }
-                encode(`\n__WORD_DOC__${JSON.stringify({ titre, contenu })}__WORD_DOC_END__\n`);
-                toolResults.push({
-                  type: 'tool_result',
-                  tool_use_id: toolUse.id,
-                  content: `Document Word "${titre}" transmis au client pour téléchargement.`,
-                });
+              let titre = String(toolUse.input.titre ?? 'Rapport académique');
+              // Sanitize si Claude a quand même mis la demande utilisateur comme titre
+              if (titre.length > 100 || /^(reprends|génère|crée|fais|donne|avec|update|écris)/i.test(titre.trim())) {
+                titre = 'Rapport académique';
               }
+              // Émettre le signal avec juste le titre — le contenu sera généré par /api/ai/generate-doc
+              encode(`\n__WORD_DOC__${JSON.stringify({ titre })}__WORD_DOC_END__\n`);
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: toolUse.id,
+                content: `Titre "${titre}" transmis. Le document Word sera généré automatiquement.`,
+              });
             }
           }
 

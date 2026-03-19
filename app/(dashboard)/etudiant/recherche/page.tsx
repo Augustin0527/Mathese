@@ -42,7 +42,7 @@ interface ChatMessage {
   proposeWord?: boolean;
   isError?: boolean;
   retryFromMessages?: ChatMessage[];
-  wordDoc?: { titre: string; contenu: string }; // document Word à générer
+  wordDoc?: { titre: string; userRequest?: string; articles?: ArticleCrossRef[] };
 }
 
 interface Conversation {
@@ -56,9 +56,10 @@ interface Conversation {
 
 // ─── Widget de téléchargement Word ───────────────────────────────────────────
 
-function WordDocWidget({ titre, contenu, auteur, sujet }: {
+function WordDocWidget({ titre, userRequest, articles, auteur, sujet }: {
   titre: string;
-  contenu: string;
+  userRequest?: string;
+  articles?: ArticleCrossRef[];
   auteur?: string;
   sujet?: string;
 }) {
@@ -70,10 +71,10 @@ function WordDocWidget({ titre, contenu, auteur, sujet }: {
 
   useEffect(() => {
     let url: string | null = null;
-    fetch('/api/ai/export-word', {
+    fetch('/api/ai/generate-doc', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contenu, titre, auteur, sujet }),
+      body: JSON.stringify({ titre, userRequest, articles, sujetThese: sujet, auteur }),
     })
       .then(async (res) => {
         if (!res.ok) throw new Error();
@@ -468,10 +469,20 @@ export default function RecherchePage() {
         .replace(/\n*__WORD_DOC_ERROR__\n*/g, '');
 
       // Extraire le document Word si présent
-      let wordDoc: { titre: string; contenu: string } | undefined;
+      let wordDoc: { titre: string; userRequest?: string; articles?: ArticleCrossRef[] } | undefined;
       const wordDocMatch = fullText.match(/__WORD_DOC__([\s\S]*?)__WORD_DOC_END__/);
       if (wordDocMatch) {
-        try { wordDoc = JSON.parse(wordDocMatch[1]); } catch { /* ignore */ }
+        try {
+          const parsed = JSON.parse(wordDocMatch[1]);
+          const lastUserMsg = newMessages.filter((m) => m.role === 'user').pop()?.content;
+          // Récupérer les articles depuis __SEARCH_RESULTS__ si présent dans ce stream
+          let streamArticles: ArticleCrossRef[] = [];
+          const searchIdx = fullText.indexOf('\n\n__SEARCH_RESULTS__');
+          if (searchIdx >= 0) {
+            try { streamArticles = JSON.parse(fullText.slice(searchIdx + '\n\n__SEARCH_RESULTS__'.length)); } catch { /* ignore */ }
+          }
+          wordDoc = { titre: parsed.titre, userRequest: lastUserMsg, articles: streamArticles };
+        } catch { /* ignore */ }
       }
 
       // Erreur de génération Word (contenu trop court / JSON tronqué)
@@ -828,7 +839,8 @@ export default function RecherchePage() {
                       {msg.wordDoc && (
                         <WordDocWidget
                           titre={msg.wordDoc.titre}
-                          contenu={msg.wordDoc.contenu}
+                          userRequest={msg.wordDoc.userRequest}
+                          articles={msg.wordDoc.articles}
                           auteur={[profile?.prenom, profile?.nom].filter(Boolean).join(' ') || undefined}
                           sujet={profile?.sujet_recherche ?? ''}
                         />
