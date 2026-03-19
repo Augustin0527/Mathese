@@ -134,12 +134,11 @@ function WordDocWidget({ titre, userRequest, articles, auteur, sujet }: {
         </a>
         <a
           href={downloadUrl!}
-          target="_blank"
-          rel="noopener noreferrer"
+          download={filenameRef.current.replace('.docx', '_copie.docx')}
           className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-4 py-2 rounded-xl font-medium transition-colors"
         >
           <ExternalLink className="w-4 h-4" />
-          Ouvrir
+          Ouvrir avec Word
         </a>
       </div>
     </div>
@@ -324,11 +323,18 @@ export default function RecherchePage() {
       .eq('conversation_id', convId)
       .order('created_at', { ascending: true });
     if (data) {
-      setMessages(data.map((m) => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-        proposeWord: m.propose_word ?? false,
-      })));
+      setMessages(data.map((m) => {
+        // Décoder les infos du document Word si présentes
+        const wdMatch = m.content.match(/\n\n__WD__(.+)$/s);
+        const wordDoc = wdMatch ? (() => { try { return JSON.parse(wdMatch[1]); } catch { return undefined; } })() : undefined;
+        const displayContent = m.content.replace(/\n\n__WD__.*$/s, '');
+        return {
+          role: m.role as 'user' | 'assistant',
+          content: displayContent,
+          proposeWord: m.propose_word ?? false,
+          wordDoc,
+        };
+      }));
     }
   }
 
@@ -358,10 +364,14 @@ export default function RecherchePage() {
     convId: string,
     msg: ChatMessage
   ) => {
+    // Encoder les infos du document Word dans le contenu pour persistance
+    const contentToSave = msg.wordDoc
+      ? msg.content + '\n\n__WD__' + JSON.stringify({ titre: msg.wordDoc.titre, userRequest: msg.wordDoc.userRequest })
+      : msg.content;
     await supabase.from('conversation_messages').insert({
       conversation_id: convId,
       role: msg.role,
-      content: msg.content,
+      content: contentToSave,
       propose_word: msg.proposeWord ?? false,
     });
     await supabase.from('conversations')

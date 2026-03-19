@@ -97,47 +97,84 @@ function parseMarkdown(md: string): Block[] {
   return blocks;
 }
 
-// ─── Couleurs ─────────────────────────────────────────────────────────────────
+// ─── Thèmes dynamiques ────────────────────────────────────────────────────────
 
-const INDIGO = '4F46E5', INDIGO_LIGHT = 'EEF2FF', GRAY_DARK = '1F2937';
-const GRAY = '6B7280', GRAY_LIGHT = 'F9FAFB', WHITE = 'FFFFFF', VIOLET = '7C3AED';
+interface DocTheme {
+  primary: string;
+  primaryLight: string;
+  accent: string;
+  font: string;
+  label: string;
+}
 
-function blockToDocx(block: Block): (Paragraph | Table)[] {
+const THEMES: Record<string, DocTheme> = {
+  default:   { primary: '4F46E5', primaryLight: 'EEF2FF', accent: '7C3AED', font: 'Calibri',          label: 'Général' },
+  sciences:  { primary: '1D4ED8', primaryLight: 'DBEAFE', accent: '0369A1', font: 'Calibri',          label: 'Sciences' },
+  sante:     { primary: '065F46', primaryLight: 'D1FAE5', accent: '047857', font: 'Calibri',          label: 'Santé' },
+  social:    { primary: '6D28D9', primaryLight: 'EDE9FE', accent: '7C3AED', font: 'Georgia',          label: 'Sciences sociales' },
+  economie:  { primary: '0F766E', primaryLight: 'CCFBF1', accent: '0D9488', font: 'Calibri',          label: 'Économie' },
+  droit:     { primary: '1E3A5F', primaryLight: 'DBEAFE', accent: '1D4ED8', font: 'Times New Roman',  label: 'Droit' },
+  arts:      { primary: '9D174D', primaryLight: 'FCE7F3', accent: 'BE185D', font: 'Georgia',          label: 'Arts & Lettres' },
+  tech:      { primary: '0F172A', primaryLight: 'F1F5F9', accent: '0EA5E9', font: 'Calibri',          label: 'Technologie' },
+  education: { primary: 'B45309', primaryLight: 'FEF3C7', accent: 'D97706', font: 'Calibri',          label: 'Éducation' },
+};
+
+function detectTheme(titre: string, sujet?: string): DocTheme {
+  const t = `${titre} ${sujet ?? ''}`.toLowerCase();
+  if (/droit|juridique|loi\b|contrat|tribunal|législat|judiciaire/.test(t))              return THEMES.droit;
+  if (/économ|financ|comptabil|budget|marché|commerce|entreprise|fiscal/.test(t))        return THEMES.economie;
+  if (/inform|algorith|logiciel|program|technolog|digital|numérique|système d'info/.test(t)) return THEMES.tech;
+  if (/art\b|littérat|philos|poés|culture|esthétiq|musique|cinéma|théâtre/.test(t))     return THEMES.arts;
+  if (/santé|médecin|biolog|chimie|physique|pharmacie|clinique|épidémio|infirmier/.test(t)) return THEMES.sante;
+  if (/social|sociolog|anthropolog|psycholog|genre|migration|communauté|famille/.test(t)) return THEMES.social;
+  if (/éducation|enseign|formation|curriculum|pédago|école|imse|bénin|afrique|apprentissage/.test(t)) return THEMES.education;
+  if (/science|recherche|expériment|méthodo|analyse|statistique|données|modèle/.test(t)) return THEMES.sciences;
+  return THEMES.default;
+}
+
+// ─── Constantes communes ──────────────────────────────────────────────────────
+
+const GRAY_DARK = '1F2937', GRAY = '6B7280', GRAY_LIGHT = 'F9FAFB', WHITE = 'FFFFFF';
+
+function blockToDocx(block: Block, theme: DocTheme): (Paragraph | Table)[] {
+  const { primary, primaryLight, accent, font } = theme;
   switch (block.type) {
     case 'h1': return [new Paragraph({
       heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 },
-      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: INDIGO, space: 4 } },
-      children: [new TextRun({ text: block.text, bold: true, color: INDIGO, size: 32 })],
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: primary, space: 4 } },
+      children: [new TextRun({ text: block.text, bold: true, color: primary, size: 32, font })],
     })];
     case 'h2': return [new Paragraph({
       heading: HeadingLevel.HEADING_2, spacing: { before: 360, after: 160 },
-      children: [new TextRun({ text: block.text, bold: true, color: INDIGO, size: 26 })],
+      children: [new TextRun({ text: block.text, bold: true, color: primary, size: 26, font })],
     })];
     case 'h3': return [new Paragraph({
       heading: HeadingLevel.HEADING_3, spacing: { before: 280, after: 120 },
-      children: [new TextRun({ text: block.text, bold: true, color: VIOLET, size: 22 })],
+      children: [new TextRun({ text: block.text, bold: true, color: accent, size: 22, font })],
     })];
     case 'paragraph': return [new Paragraph({
+      alignment: AlignmentType.JUSTIFIED,
       spacing: { before: 100, after: 120, line: 276 },
       children: block.runs.map((r) => new TextRun({
-        text: r.text, bold: r.bold, italics: r.italic, color: GRAY_DARK, size: 22,
-        ...(r.code ? { font: 'Courier New', color: '7C3AED', shading: { type: ShadingType.SOLID, color: 'EDE9FE', fill: 'EDE9FE' } } : {}),
+        text: r.text, bold: r.bold, italics: r.italic, color: GRAY_DARK, size: 22, font,
+        ...(r.code ? { font: 'Courier New', color: accent, shading: { type: ShadingType.SOLID, color: primaryLight, fill: primaryLight } } : {}),
       })),
     })];
     case 'bullet': return [new Paragraph({
       bullet: { level: block.depth }, spacing: { before: 60, after: 60, line: 260 },
-      children: [new TextRun({ text: block.text, color: GRAY_DARK, size: 22 })],
+      children: [new TextRun({ text: block.text, color: GRAY_DARK, size: 22, font })],
     })];
     case 'ordered': return [new Paragraph({
       numbering: { reference: 'numbered-list', level: 0 }, spacing: { before: 60, after: 60, line: 260 },
-      children: [new TextRun({ text: block.text, color: GRAY_DARK, size: 22 })],
+      children: [new TextRun({ text: block.text, color: GRAY_DARK, size: 22, font })],
     })];
     case 'blockquote': return [new Paragraph({
+      alignment: AlignmentType.JUSTIFIED,
       spacing: { before: 160, after: 160, line: 276 },
       indent: { left: convertInchesToTwip(0.4), right: convertInchesToTwip(0.4) },
-      border: { left: { style: BorderStyle.SINGLE, size: 16, color: INDIGO, space: 8 } },
-      shading: { type: ShadingType.SOLID, color: INDIGO_LIGHT, fill: INDIGO_LIGHT },
-      children: [new TextRun({ text: block.text, italics: true, color: INDIGO, size: 22 })],
+      border: { left: { style: BorderStyle.SINGLE, size: 16, color: primary, space: 8 } },
+      shading: { type: ShadingType.SOLID, color: primaryLight, fill: primaryLight },
+      children: [new TextRun({ text: block.text, italics: true, color: primary, size: 22, font })],
     })];
     case 'code': return [new Paragraph({
       spacing: { before: 160, after: 160 },
@@ -159,9 +196,9 @@ function blockToDocx(block: Block): (Paragraph | Table)[] {
       const headerRow = new TableRow({
         tableHeader: true,
         children: block.headers.map((h) => new TableCell({
-          shading: { type: ShadingType.SOLID, color: INDIGO, fill: INDIGO },
+          shading: { type: ShadingType.SOLID, color: primary, fill: primary },
           margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          children: [new Paragraph({ alignment: AlignmentType.LEFT, children: [new TextRun({ text: h, bold: true, color: WHITE, size: 20 })] })],
+          children: [new Paragraph({ alignment: AlignmentType.LEFT, children: [new TextRun({ text: h, bold: true, color: WHITE, size: 20, font })] })],
         })),
       });
       const dataRows = block.rows.map((row, rowIdx) => new TableRow({
@@ -170,7 +207,7 @@ function blockToDocx(block: Block): (Paragraph | Table)[] {
             ? { type: ShadingType.SOLID, color: WHITE, fill: WHITE }
             : { type: ShadingType.SOLID, color: GRAY_LIGHT, fill: GRAY_LIGHT },
           margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          children: [new Paragraph({ alignment: AlignmentType.LEFT, children: [new TextRun({ text: cell, color: GRAY_DARK, size: 20 })] })],
+          children: [new Paragraph({ alignment: AlignmentType.LEFT, children: [new TextRun({ text: cell, color: GRAY_DARK, size: 20, font })] })],
         })),
       }));
       const table = new Table({
@@ -190,10 +227,12 @@ function blockToDocx(block: Block): (Paragraph | Table)[] {
   }
 }
 
-function markdownToDocx(markdown: string, titre: string, auteur?: string, sujet?: string): Document {
+function markdownToDocx(markdown: string, titre: string, auteur?: string, sujet?: string, theme?: DocTheme): Document {
+  const t = theme ?? detectTheme(titre, sujet);
+  const { primary, primaryLight, accent, font } = t;
   const blocks = parseMarkdown(markdown);
   const children: (Paragraph | Table)[] = [];
-  for (const block of blocks) children.push(...blockToDocx(block));
+  for (const block of blocks) children.push(...blockToDocx(block, t));
 
   const dateStr = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -202,7 +241,7 @@ function markdownToDocx(markdown: string, titre: string, auteur?: string, sujet?
       config: [{ reference: 'numbered-list', levels: [{ level: 0, format: NumberFormat.DECIMAL, text: '%1.', alignment: AlignmentType.START, style: { paragraph: { indent: { left: 720, hanging: 360 } } } }] }],
     },
     styles: {
-      default: { document: { run: { font: 'Calibri', size: 22, color: GRAY_DARK }, paragraph: { spacing: { line: 276 } } } },
+      default: { document: { run: { font, size: 22, color: GRAY_DARK }, paragraph: { spacing: { line: 276 } } } },
     },
     sections: [{
       properties: {
@@ -213,10 +252,10 @@ function markdownToDocx(markdown: string, titre: string, auteur?: string, sujet?
       },
       headers: {
         default: new Header({ children: [new Paragraph({
-          border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: INDIGO, space: 4 } },
+          border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: primary, space: 4 } },
           children: [
-            new TextRun({ text: titre, bold: true, color: INDIGO, size: 20 }),
-            new TextRun({ text: `\t${auteur ?? ''}`, color: GRAY, size: 18 }),
+            new TextRun({ text: titre, bold: true, color: primary, size: 20, font }),
+            new TextRun({ text: `\t${auteur ?? ''}`, color: GRAY, size: 18, font }),
           ],
         })] }),
       },
@@ -236,19 +275,19 @@ function markdownToDocx(markdown: string, titre: string, auteur?: string, sujet?
         new Paragraph({
           alignment: AlignmentType.CENTER,
           spacing: { before: convertInchesToTwip(1.5), after: 400 },
-          shading: { type: ShadingType.SOLID, color: INDIGO_LIGHT, fill: INDIGO_LIGHT },
+          shading: { type: ShadingType.SOLID, color: primaryLight, fill: primaryLight },
           border: {
-            top: { style: BorderStyle.SINGLE, size: 12, color: INDIGO },
-            bottom: { style: BorderStyle.SINGLE, size: 12, color: INDIGO },
-            left: { style: BorderStyle.SINGLE, size: 12, color: INDIGO },
-            right: { style: BorderStyle.SINGLE, size: 12, color: INDIGO },
+            top: { style: BorderStyle.SINGLE, size: 12, color: primary },
+            bottom: { style: BorderStyle.SINGLE, size: 12, color: primary },
+            left: { style: BorderStyle.SINGLE, size: 12, color: primary },
+            right: { style: BorderStyle.SINGLE, size: 12, color: primary },
           },
           children: [
-            new TextRun({ text: titre, bold: true, color: INDIGO, size: 40, break: 1 }),
-            ...(auteur ? [new TextRun({ text: auteur, color: GRAY, size: 22, break: 2 })] : []),
-            ...(sujet ? [new TextRun({ text: sujet, italics: true, color: VIOLET, size: 22, break: 1 })] : []),
+            new TextRun({ text: titre, bold: true, color: primary, size: 40, font, break: 1 }),
+            ...(auteur ? [new TextRun({ text: auteur, color: GRAY, size: 22, font, break: 2 })] : []),
+            ...(sujet ? [new TextRun({ text: sujet, italics: true, color: accent, size: 22, font, break: 1 })] : []),
             new TextRun({ text: dateStr, color: GRAY, size: 20, break: 2 }),
-            new TextRun({ text: 'Agent IA de MaThèse', italics: true, color: INDIGO, size: 18, break: 1 }),
+            new TextRun({ text: `Agent IA de MaThèse · Thème : ${t.label}`, italics: true, color: primary, size: 18, break: 1 }),
           ],
         }),
         new Paragraph({ pageBreakBefore: true, children: [] }),
