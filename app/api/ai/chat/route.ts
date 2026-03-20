@@ -267,15 +267,12 @@ async function handleGemini(
   const lastMsg = rawMessages[rawMessages.length - 1];
   let currentParts: Part[] = [{ text: lastMsg?.content ?? '' }];
 
-  const model = genai.getGenerativeModel(
-    {
-      model: modelName,
-      systemInstruction: systemPrompt,
-      tools: [{ functionDeclarations: geminiTools }],
-      generationConfig: { maxOutputTokens: 2000, temperature: 0.7 },
-    },
-    { apiVersion: 'v1' },
-  );
+  const model = genai.getGenerativeModel({
+    model: modelName,
+    systemInstruction: systemPrompt,
+    tools: [{ functionDeclarations: geminiTools }],
+    generationConfig: { maxOutputTokens: 2000, temperature: 0.7 },
+  });
 
   let foundArticles: ArticleResult[] = [];
   let geminiIterations = 0;
