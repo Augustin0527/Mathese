@@ -769,42 +769,13 @@ export default function RecherchePage() {
             <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0">
               <Sparkles className="w-4 h-4 text-white" />
             </div>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0">
               <p className="text-sm font-semibold text-gray-900">Agent IA de MaThèse</p>
               <p className="text-xs text-gray-400 truncate">
                 {biblioExistante.length > 0
                   ? `${biblioExistante.length} référence${biblioExistante.length > 1 ? 's' : ''} · Recherche CrossRef intégrée`
                   : 'Recherche d\'articles automatique'}
               </p>
-            </div>
-            {/* Sélecteur de modèle */}
-            <div className="relative flex-shrink-0">
-              <button
-                onClick={(e) => { e.stopPropagation(); setModelMenuOpen((v) => !v); }}
-                className="flex items-center gap-1.5 text-xs border border-gray-200 hover:border-indigo-300 bg-white hover:bg-indigo-50 rounded-xl px-3 py-1.5 transition-colors"
-              >
-                <span className={`font-medium ${AI_MODELS.find((m) => m.id === selectedModel)?.color ?? 'text-gray-700'}`}>
-                  {AI_MODELS.find((m) => m.id === selectedModel)?.label}
-                </span>
-                <ChevronDown className="w-3 h-3 text-gray-400" />
-              </button>
-              {modelMenuOpen && (
-                <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden w-52">
-                  {AI_MODELS.map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={(e) => { e.stopPropagation(); changeModel(m.id); }}
-                      className={`w-full flex items-start gap-2.5 px-4 py-3 hover:bg-gray-50 transition-colors text-left ${selectedModel === m.id ? 'bg-indigo-50' : ''}`}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-medium ${m.color}`}>{m.label}</p>
-                        <p className="text-xs text-gray-400">{m.desc}</p>
-                      </div>
-                      {selectedModel === m.id && <Check className="w-3.5 h-3.5 text-indigo-500 mt-0.5 flex-shrink-0" />}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -965,7 +936,42 @@ export default function RecherchePage() {
         )}
 
         {/* Input */}
-        <div className="flex-shrink-0 border-t border-gray-100 px-4 py-3 bg-white">
+        <div className="flex-shrink-0 border-t border-gray-100 px-4 pt-2 pb-3 bg-white">
+
+          {/* Sélecteur de modèle */}
+          <div className="relative mb-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); setModelMenuOpen((v) => !v); }}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-colors ${
+                AI_MODELS.find((m) => m.id === selectedModel)?.color
+                  ? 'border-indigo-100 bg-indigo-50 hover:bg-indigo-100'
+                  : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
+              }`}
+            >
+              <span className={`font-medium ${AI_MODELS.find((m) => m.id === selectedModel)?.color ?? 'text-gray-600'}`}>
+                {AI_MODELS.find((m) => m.id === selectedModel)?.label}
+              </span>
+              <ChevronDown className="w-3 h-3 text-gray-400" />
+            </button>
+            {modelMenuOpen && (
+              <div className="absolute left-0 bottom-full mb-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden w-52">
+                {AI_MODELS.map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={(e) => { e.stopPropagation(); changeModel(m.id); }}
+                    className={`w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-gray-50 transition-colors text-left ${selectedModel === m.id ? 'bg-indigo-50' : ''}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium ${m.color}`}>{m.label}</p>
+                      <p className="text-xs text-gray-400">{m.desc}</p>
+                    </div>
+                    {selectedModel === m.id && <Check className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-2">
             <textarea
               value={input}
