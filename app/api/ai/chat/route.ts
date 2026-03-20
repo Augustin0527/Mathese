@@ -195,7 +195,7 @@ async function handleClaude(
 
     if (toolUses.length === 0) break;
 
-    const assistantContent: Anthropic.ContentBlock[] = [];
+    const assistantContent: Array<Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam> = [];
     if (fullText) assistantContent.push({ type: 'text', text: fullText });
     for (const tu of toolUses) assistantContent.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
     currentMessages = [...currentMessages, { role: 'assistant', content: assistantContent }];
@@ -341,7 +341,7 @@ async function handleGemini(
 
 export async function POST(req: NextRequest) {
   const { messages, sujetThese, bibliotheque, model: modelParam } = await req.json();
-  const selectedModel: string = modelParam || 'gemini-2.0-flash';
+  const selectedModel: string = modelParam || 'claude-sonnet-4-6';
 
   const biblioContext = bibliotheque?.length
     ? `\n\n---\nBibliothèque personnelle de l'étudiant (${bibliotheque.length} références) :\n${

@@ -300,7 +300,7 @@ export default function RecherchePage() {
   const [searchingStatus, setSearchingStatus] = useState<string | null>(null);
 
   // ── Sélecteur de modèle ──
-  const [selectedModel, setSelectedModel] = useState<ModelId>('gemini-2.0-flash');
+  const [selectedModel, setSelectedModel] = useState<ModelId>('claude-sonnet-4-6');
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
 
   useEffect(() => {
