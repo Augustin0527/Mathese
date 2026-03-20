@@ -1,8 +1,10 @@
 import { NextRequest } from 'next/server';
+import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI, SchemaType, type Content, type Part, type FunctionDeclaration } from '@google/generative-ai';
 
 export const maxDuration = 60;
 
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const genai = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY!);
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -116,9 +118,116 @@ async function rechercherArticles(query: string, nb = 6): Promise<ArticleResult[
   return results.slice(0, nb);
 }
 
-// ─── Déclarations des outils (format Gemini) ─────────────────────────────────
+// ─── Outils communs ───────────────────────────────────────────────────────────
 
-const functionDeclarations: FunctionDeclaration[] = [
+function encodeResult(encode: (t: string) => void, articles: ArticleResult[]): void {
+  if (articles.length > 0) encode('\n\n__SEARCH_RESULTS__' + JSON.stringify(articles));
+}
+
+// ─── Handler Claude ───────────────────────────────────────────────────────────
+
+async function handleClaude(
+  systemPrompt: string,
+  rawMessages: Array<{ role: string; content: string }>,
+  encode: (t: string) => void,
+) {
+  const tools: Anthropic.Tool[] = [
+    {
+      name: 'rechercher_articles',
+      description: "Recherche des articles académiques sur CrossRef, Semantic Scholar et OpenAlex.",
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          query: { type: 'string', description: 'Mots-clés en anglais de préférence' },
+          nb: { type: 'number', description: 'Nombre de résultats souhaités (max 12)' },
+        },
+        required: ['query'],
+      },
+    },
+    {
+      name: 'generer_document_word',
+      description: "Déclenche la génération d'un document Word. Fournir UNIQUEMENT le titre.",
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          titre: { type: 'string', description: 'Titre académique court et descriptif' },
+        },
+        required: ['titre'],
+      },
+    },
+  ];
+
+  let foundArticles: ArticleResult[] = [];
+  let currentMessages: Anthropic.MessageParam[] = rawMessages.map((m) => ({
+    role: m.role === 'user' ? 'user' : 'assistant',
+    content: m.content,
+  }));
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const stream = anthropic.messages.stream({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      system: systemPrompt,
+      tools,
+      messages: currentMessages,
+    });
+
+    let fullText = '';
+    const toolUses: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+    let currentToolId = '';
+    let currentToolName = '';
+    let currentInputJson = '';
+
+    for await (const event of stream) {
+      if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
+        currentToolId = event.content_block.id;
+        currentToolName = event.content_block.name;
+        currentInputJson = '';
+      } else if (event.type === 'content_block_delta') {
+        if (event.delta.type === 'text_delta') { encode(event.delta.text); fullText += event.delta.text; }
+        else if (event.delta.type === 'input_json_delta') { currentInputJson += event.delta.partial_json; }
+      } else if (event.type === 'content_block_stop' && currentToolId) {
+        try { toolUses.push({ id: currentToolId, name: currentToolName, input: JSON.parse(currentInputJson || '{}') }); } catch { /* ignore */ }
+        currentToolId = ''; currentToolName = ''; currentInputJson = '';
+      }
+    }
+
+    if (toolUses.length === 0) break;
+
+    const assistantContent: Anthropic.ContentBlock[] = [];
+    if (fullText) assistantContent.push({ type: 'text', text: fullText });
+    for (const tu of toolUses) assistantContent.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
+    currentMessages = [...currentMessages, { role: 'assistant', content: assistantContent }];
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const tu of toolUses) {
+      if (tu.name === 'rechercher_articles') {
+        const query = String(tu.input.query ?? '');
+        const nb = typeof tu.input.nb === 'number' ? tu.input.nb : 6;
+        encode(`\n__STATUS__Recherche dans CrossRef, Semantic Scholar et OpenAlex : "${query}"...__STATUS_END__\n`);
+        const articles = await rechercherArticles(query, nb);
+        foundArticles = [...foundArticles, ...articles];
+        const resultText = articles.length > 0
+          ? articles.map((a, i) => `[${i + 1}] **${a.titre}** (${a.source})\n   Auteurs : ${a.auteurs || 'Inconnu'} · Année : ${a.annee || '?'}\n${a.doi ? `   DOI : ${a.doi}\n` : ''}${a.abstract ? `   Résumé : ${a.abstract}\n` : ''}`).join('\n')
+          : 'Aucun article trouvé.';
+        toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: resultText });
+      } else if (tu.name === 'generer_document_word') {
+        let titre = String(tu.input.titre ?? 'Rapport académique');
+        if (titre.length > 100 || /^(reprends|génère|crée|fais|donne|avec|update|écris)/i.test(titre.trim())) titre = 'Rapport académique';
+        encode(`\n__WORD_DOC__${JSON.stringify({ titre })}__WORD_DOC_END__\n`);
+        toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: `Document "${titre}" transmis.` });
+      }
+    }
+    currentMessages = [...currentMessages, { role: 'user', content: toolResults }];
+  }
+
+  encodeResult(encode, foundArticles);
+}
+
+// ─── Handler Gemini ───────────────────────────────────────────────────────────
+
+const geminiTools: FunctionDeclaration[] = [
   {
     name: 'rechercher_articles',
     description: "Recherche des articles académiques sur CrossRef, Semantic Scholar et OpenAlex. À utiliser quand l'étudiant demande des articles, références ou littérature.",
@@ -133,21 +242,106 @@ const functionDeclarations: FunctionDeclaration[] = [
   },
   {
     name: 'generer_document_word',
-    description: "Déclenche la génération d'un document Word. À utiliser UNIQUEMENT quand l'étudiant demande un rapport, une synthèse ou un document à télécharger. Ne fournir QUE le titre.",
+    description: "Déclenche la génération d'un document Word. À utiliser UNIQUEMENT quand l'étudiant demande un rapport, une synthèse ou un document. Ne fournir QUE le titre.",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
-        titre: { type: SchemaType.STRING, description: 'Titre académique court et descriptif (ex: "L\'IMSE au Bénin : Défis et Perspectives")' },
+        titre: { type: SchemaType.STRING, description: 'Titre académique court et descriptif' },
       },
       required: ['titre'],
     },
   },
 ];
 
-// ─── Handler ──────────────────────────────────────────────────────────────────
+async function handleGemini(
+  modelName: string,
+  systemPrompt: string,
+  rawMessages: Array<{ role: string; content: string }>,
+  encode: (t: string) => void,
+) {
+  let geminiHistory: Content[] = rawMessages.slice(0, -1).map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
+
+  const lastMsg = rawMessages[rawMessages.length - 1];
+  let currentParts: Part[] = [{ text: lastMsg?.content ?? '' }];
+
+  const model = genai.getGenerativeModel({
+    model: modelName,
+    systemInstruction: systemPrompt,
+    tools: [{ functionDeclarations: geminiTools }],
+    generationConfig: { maxOutputTokens: 2000, temperature: 0.7 },
+  });
+
+  let foundArticles: ArticleResult[] = [];
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const chat = model.startChat({ history: geminiHistory });
+    const result = await chat.sendMessageStream(currentParts);
+
+    let fullText = '';
+    const functionCalls: { name: string; args: Record<string, unknown> }[] = [];
+
+    for await (const chunk of result.stream) {
+      for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
+        if ('text' in part && part.text) { encode(part.text); fullText += part.text; }
+        if ('functionCall' in part && part.functionCall) {
+          functionCalls.push({ name: part.functionCall.name ?? '', args: (part.functionCall.args ?? {}) as Record<string, unknown> });
+        }
+      }
+    }
+
+    // Vérifier aussi la réponse finale pour les function calls manqués
+    try {
+      const finalRes = await result.response;
+      for (const part of finalRes.candidates?.[0]?.content?.parts ?? []) {
+        if ('functionCall' in part && part.functionCall) {
+          if (!functionCalls.some((fc) => fc.name === part.functionCall?.name)) {
+            functionCalls.push({ name: part.functionCall.name ?? '', args: (part.functionCall.args ?? {}) as Record<string, unknown> });
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
+    if (functionCalls.length === 0) break;
+
+    const modelParts: Part[] = [];
+    if (fullText) modelParts.push({ text: fullText });
+    for (const fc of functionCalls) modelParts.push({ functionCall: { name: fc.name, args: fc.args } });
+    geminiHistory = [...geminiHistory, { role: 'user', parts: currentParts }, { role: 'model', parts: modelParts }];
+
+    const functionResponseParts: Part[] = [];
+    for (const fc of functionCalls) {
+      if (fc.name === 'rechercher_articles') {
+        const query = String(fc.args.query ?? '');
+        const nb = typeof fc.args.nb === 'number' ? fc.args.nb : 6;
+        encode(`\n__STATUS__Recherche dans CrossRef, Semantic Scholar et OpenAlex : "${query}"...__STATUS_END__\n`);
+        const articles = await rechercherArticles(query, nb);
+        foundArticles = [...foundArticles, ...articles];
+        const resultText = articles.length > 0
+          ? articles.map((a, i) => `[${i + 1}] **${a.titre}** (${a.source})\n   Auteurs : ${a.auteurs || 'Inconnu'} · Année : ${a.annee || '?'}\n${a.doi ? `   DOI : ${a.doi}\n` : ''}${a.abstract ? `   Résumé : ${a.abstract}\n` : ''}`).join('\n')
+          : 'Aucun article trouvé.';
+        functionResponseParts.push({ functionResponse: { name: fc.name, response: { result: resultText } } });
+      } else if (fc.name === 'generer_document_word') {
+        let titre = String(fc.args.titre ?? 'Rapport académique');
+        if (titre.length > 100 || /^(reprends|génère|crée|fais|donne|avec|update|écris)/i.test(titre.trim())) titre = 'Rapport académique';
+        encode(`\n__WORD_DOC__${JSON.stringify({ titre })}__WORD_DOC_END__\n`);
+        functionResponseParts.push({ functionResponse: { name: fc.name, response: { result: `Document "${titre}" transmis.` } } });
+      }
+    }
+    currentParts = functionResponseParts;
+  }
+
+  encodeResult(encode, foundArticles);
+}
+
+// ─── Route principale ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const { messages, sujetThese, bibliotheque } = await req.json();
+  const { messages, sujetThese, bibliotheque, model: modelParam } = await req.json();
+  const selectedModel: string = modelParam || 'gemini-2.0-flash';
 
   const biblioContext = bibliotheque?.length
     ? `\n\n---\nBibliothèque personnelle de l'étudiant (${bibliotheque.length} références) :\n${
@@ -195,126 +389,17 @@ Tu DOIS obligatoirement DANS CET ORDRE :
     async start(controller) {
       const encode = (text: string) => controller.enqueue(new TextEncoder().encode(text));
 
-      // Convertir les messages au format Gemini (role: 'user' | 'model')
       const rawMessages = (messages as Array<{ role: string; content: string; isError?: boolean }>)
         .filter((m) => !m.isError && m.content && m.content.trim() !== '');
 
-      // Historique = tous les messages sauf le dernier
-      let geminiHistory: Content[] = rawMessages.slice(0, -1).map((m) => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }],
-      }));
-
-      // Message courant = dernier message
-      const lastMsg = rawMessages[rawMessages.length - 1];
-      let currentParts: Part[] = [{ text: lastMsg?.content ?? '' }];
-
-      const model = genai.getGenerativeModel({
-        model: 'gemini-2.0-flash',
-        systemInstruction: systemPrompt,
-        tools: [{ functionDeclarations }],
-        generationConfig: { maxOutputTokens: 2000, temperature: 0.7 },
-      });
-
-      let foundArticles: ArticleResult[] = [];
-
       try {
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const chat = model.startChat({ history: geminiHistory });
-          const result = await chat.sendMessageStream(currentParts);
-
-          let fullText = '';
-          const functionCalls: { name: string; args: Record<string, unknown> }[] = [];
-
-          for await (const chunk of result.stream) {
-            for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
-              if ('text' in part && part.text) {
-                encode(part.text);
-                fullText += part.text;
-              }
-              if ('functionCall' in part && part.functionCall) {
-                functionCalls.push({
-                  name: part.functionCall.name ?? '',
-                  args: (part.functionCall.args ?? {}) as Record<string, unknown>,
-                });
-              }
-            }
-          }
-
-          // Vérifier aussi la réponse finale pour les function calls manqués
-          try {
-            const finalRes = await result.response;
-            for (const part of finalRes.candidates?.[0]?.content?.parts ?? []) {
-              if ('functionCall' in part && part.functionCall) {
-                const already = functionCalls.some((fc) => fc.name === part.functionCall?.name);
-                if (!already) {
-                  functionCalls.push({ name: part.functionCall.name ?? '', args: (part.functionCall.args ?? {}) as Record<string, unknown> });
-                }
-              }
-            }
-          } catch { /* ignore */ }
-
-          if (functionCalls.length === 0) break;
-
-          // Ajouter la réponse du modèle à l'historique
-          const modelParts: Part[] = [];
-          if (fullText) modelParts.push({ text: fullText });
-          for (const fc of functionCalls) {
-            modelParts.push({ functionCall: { name: fc.name, args: fc.args } });
-          }
-          geminiHistory = [
-            ...geminiHistory,
-            { role: 'user', parts: currentParts },
-            { role: 'model', parts: modelParts },
-          ];
-
-          // ── Exécuter les outils ──
-          const functionResponseParts: Part[] = [];
-
-          for (const fc of functionCalls) {
-            if (fc.name === 'rechercher_articles') {
-              const query = String(fc.args.query ?? '');
-              const nb = typeof fc.args.nb === 'number' ? fc.args.nb : 6;
-
-              encode(`\n__STATUS__Recherche dans CrossRef, Semantic Scholar et OpenAlex : "${query}"...__STATUS_END__\n`);
-
-              const articles = await rechercherArticles(query, nb);
-              foundArticles = [...foundArticles, ...articles];
-
-              const resultText = articles.length > 0
-                ? articles.map((a, i) =>
-                    `[${i + 1}] **${a.titre}** (${a.source})\n` +
-                    `   Auteurs : ${a.auteurs || 'Inconnu'} · Année : ${a.annee || '?'}\n` +
-                    (a.doi ? `   DOI : ${a.doi}\n` : '') +
-                    (a.abstract ? `   Résumé : ${a.abstract}\n` : '')
-                  ).join('\n')
-                : 'Aucun article trouvé.';
-
-              functionResponseParts.push({
-                functionResponse: { name: fc.name, response: { result: resultText } },
-              });
-
-            } else if (fc.name === 'generer_document_word') {
-              let titre = String(fc.args.titre ?? 'Rapport académique');
-              if (titre.length > 100 || /^(reprends|génère|crée|fais|donne|avec|update|écris)/i.test(titre.trim())) {
-                titre = 'Rapport académique';
-              }
-              encode(`\n__WORD_DOC__${JSON.stringify({ titre })}__WORD_DOC_END__\n`);
-              functionResponseParts.push({
-                functionResponse: { name: fc.name, response: { result: `Document Word "${titre}" transmis au client.` } },
-              });
-            }
-          }
-
-          currentParts = functionResponseParts;
-        }
-
-        if (foundArticles.length > 0) {
-          encode('\n\n__SEARCH_RESULTS__' + JSON.stringify(foundArticles));
+        if (selectedModel.startsWith('claude')) {
+          await handleClaude(systemPrompt, rawMessages, encode);
+        } else {
+          await handleGemini(selectedModel, systemPrompt, rawMessages, encode);
         }
       } catch (err) {
-        console.error('[chat/route] Gemini Error:', err);
+        console.error('[chat/route] Error:', err);
         encode('\n\n__ERROR__');
       }
 

@@ -10,8 +10,20 @@ import {
   Send, Loader2, Sparkles, BookOpen, ExternalLink,
   Plus, CheckCircle2, Copy, Check, FileSearch, FileDown,
   MessageSquarePlus, Trash2, Pencil, X, ChevronLeft, ChevronRight,
-  MessagesSquare, RefreshCw, AlertCircle,
+  MessagesSquare, RefreshCw, AlertCircle, ChevronDown,
 } from 'lucide-react';
+
+// ─── Modèles IA disponibles ───────────────────────────────────────────────────
+
+const AI_MODELS = [
+  { id: 'gemini-2.0-flash',      label: 'Gemini 2.0 Flash', desc: 'Rapide · Économique',     color: 'text-blue-600' },
+  { id: 'gemini-1.5-flash',      label: 'Gemini 1.5 Flash', desc: 'Stable · Gratuit',        color: 'text-sky-600' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku', desc: 'Ultra-rapide · Léger',    color: 'text-emerald-600' },
+  { id: 'claude-sonnet-4-6',     label: 'Claude Sonnet',    desc: 'Équilibré · Précis',      color: 'text-violet-600' },
+  { id: 'claude-opus-4-6',       label: 'Claude Opus',      desc: 'Très puissant · Lent',    color: 'text-purple-700' },
+] as const;
+
+type ModelId = (typeof AI_MODELS)[number]['id'];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -287,6 +299,29 @@ export default function RecherchePage() {
   const [ajoutesIA, setAjoutesIA] = useState<Set<number>>(new Set());
   const [searchingStatus, setSearchingStatus] = useState<string | null>(null);
 
+  // ── Sélecteur de modèle ──
+  const [selectedModel, setSelectedModel] = useState<ModelId>('gemini-2.0-flash');
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('mathese_model') as ModelId | null;
+    if (saved && AI_MODELS.some((m) => m.id === saved)) setSelectedModel(saved);
+  }, []);
+
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    const close = () => setModelMenuOpen(false);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [modelMenuOpen]);
+
+  function changeModel(id: ModelId) {
+    setSelectedModel(id);
+    localStorage.setItem('mathese_model', id);
+    setModelMenuOpen(false);
+  }
+
+
   // ─── Chargements initiaux ────────────────────────────────────────────────
   useEffect(() => {
     if (!user) return;
@@ -428,6 +463,7 @@ export default function RecherchePage() {
           messages: newMessages,
           sujetThese: profile?.sujet_recherche ?? '',
           bibliotheque: biblioExistante,
+          model: selectedModel,
         }),
       });
 
@@ -733,13 +769,42 @@ export default function RecherchePage() {
             <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0">
               <Sparkles className="w-4 h-4 text-white" />
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-gray-900">Agent IA de MaThèse</p>
               <p className="text-xs text-gray-400 truncate">
                 {biblioExistante.length > 0
                   ? `${biblioExistante.length} référence${biblioExistante.length > 1 ? 's' : ''} · Recherche CrossRef intégrée`
                   : 'Recherche d\'articles automatique'}
               </p>
+            </div>
+            {/* Sélecteur de modèle */}
+            <div className="relative flex-shrink-0">
+              <button
+                onClick={(e) => { e.stopPropagation(); setModelMenuOpen((v) => !v); }}
+                className="flex items-center gap-1.5 text-xs border border-gray-200 hover:border-indigo-300 bg-white hover:bg-indigo-50 rounded-xl px-3 py-1.5 transition-colors"
+              >
+                <span className={`font-medium ${AI_MODELS.find((m) => m.id === selectedModel)?.color ?? 'text-gray-700'}`}>
+                  {AI_MODELS.find((m) => m.id === selectedModel)?.label}
+                </span>
+                <ChevronDown className="w-3 h-3 text-gray-400" />
+              </button>
+              {modelMenuOpen && (
+                <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden w-52">
+                  {AI_MODELS.map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={(e) => { e.stopPropagation(); changeModel(m.id); }}
+                      className={`w-full flex items-start gap-2.5 px-4 py-3 hover:bg-gray-50 transition-colors text-left ${selectedModel === m.id ? 'bg-indigo-50' : ''}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-medium ${m.color}`}>{m.label}</p>
+                        <p className="text-xs text-gray-400">{m.desc}</p>
+                      </div>
+                      {selectedModel === m.id && <Check className="w-3.5 h-3.5 text-indigo-500 mt-0.5 flex-shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -779,7 +844,9 @@ export default function RecherchePage() {
                   <div className="w-5 h-5 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-md flex items-center justify-center flex-shrink-0">
                     <Sparkles className="w-3 h-3 text-white" />
                   </div>
-                  <span className="text-xs font-medium text-gray-500">Agent IA</span>
+                  <span className={`text-xs font-medium ${AI_MODELS.find((m) => m.id === selectedModel)?.color ?? 'text-gray-500'}`}>
+                    {AI_MODELS.find((m) => m.id === selectedModel)?.label ?? 'Agent IA'}
+                  </span>
                 </div>
               )}
 
