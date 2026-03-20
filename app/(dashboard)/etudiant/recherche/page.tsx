@@ -549,9 +549,10 @@ export default function RecherchePage() {
 
       // Détecter une erreur serveur signalée dans le stream
       if (visibleFinal.includes('__ERROR__')) {
+        const errorDetail = visibleFinal.replace('__ERROR__', '').trim();
         const errorMsg: ChatMessage = {
           role: 'assistant',
-          content: 'Erreur de connexion.',
+          content: errorDetail || 'Erreur de connexion.',
           isError: true,
           retryFromMessages: newMessages,
         };
