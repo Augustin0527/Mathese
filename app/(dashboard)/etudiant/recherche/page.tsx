@@ -815,9 +815,7 @@ export default function RecherchePage() {
                   <div className="w-5 h-5 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-md flex items-center justify-center flex-shrink-0">
                     <Sparkles className="w-3 h-3 text-white" />
                   </div>
-                  <span className={`text-xs font-medium ${AI_MODELS.find((m) => m.id === selectedModel)?.color ?? 'text-gray-500'}`}>
-                    {AI_MODELS.find((m) => m.id === selectedModel)?.label ?? 'Agent IA'}
-                  </span>
+                  <span className="text-xs font-medium text-gray-500">Agent IA</span>
                 </div>
               )}
 

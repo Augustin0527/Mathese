@@ -399,8 +399,9 @@ Tu DOIS obligatoirement DANS CET ORDRE :
           await handleGemini(selectedModel, systemPrompt, rawMessages, encode);
         }
       } catch (err) {
-        console.error('[chat/route] Error:', err);
-        encode('\n\n__ERROR__');
+        const msg = (err as Error)?.message ?? String(err);
+        console.error('[chat/route] Error:', msg);
+        encode(`\n\nErreur technique : ${msg}\n\n__ERROR__`);
       }
 
       controller.close();
