@@ -163,8 +163,8 @@ async function handleClaude(
     content: m.content,
   }));
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  let iterations = 0;
+  while (iterations++ < 5) {
     const stream = anthropic.messages.stream({
       model: 'claude-sonnet-4-6',
       max_tokens: 2000,
@@ -275,9 +275,9 @@ async function handleGemini(
   });
 
   let foundArticles: ArticleResult[] = [];
+  let geminiIterations = 0;
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  while (geminiIterations++ < 5) {
     const chat = model.startChat({ history: geminiHistory });
     const result = await chat.sendMessageStream(currentParts);
 
