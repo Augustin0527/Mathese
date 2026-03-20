@@ -1,9 +1,11 @@
 import { NextRequest } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI, SchemaType, type Content, type Part, type FunctionDeclaration } from '@google/generative-ai';
 
 export const maxDuration = 60;
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genai = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY!);
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
 
 interface ArticleBiblio {
   titre: string;
@@ -27,12 +29,10 @@ interface ArticleResult {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Exclut les titres qui sont en réalité des légendes de tableau/figure */
 function isTitleFigureOrTable(titre: string): boolean {
   return /^(table|figure|fig\.|tab\.|appendix|annexe|supplement)/i.test(titre.trim());
 }
 
-/** Types CrossRef acceptables (articles, chapitres, préprints, rapports) */
 const VALID_TYPES = new Set([
   'journal-article', 'proceedings-article', 'book-chapter', 'book',
   'monograph', 'report', 'dissertation', 'posted-content', 'preprint',
@@ -42,151 +42,107 @@ const VALID_TYPES = new Set([
 
 interface CrossRefAuthor { given?: string; family?: string }
 interface CrossRefWork {
-  title?: string[];
-  author?: CrossRefAuthor[];
-  published?: { 'date-parts'?: number[][] };
-  DOI?: string;
-  URL?: string;
-  abstract?: string;
-  type?: string;
+  title?: string[]; author?: CrossRefAuthor[];
+  published?: { 'date-parts'?: number[][] }; DOI?: string; URL?: string; abstract?: string; type?: string;
 }
 interface CrossRefResponse { message?: { items?: CrossRefWork[] } }
 
 async function rechercherCrossRef(query: string, nb = 6): Promise<ArticleResult[]> {
   const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&rows=${Math.min(nb, 10)}&select=title,author,published,DOI,URL,abstract,type`;
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'MaThese/1.0 (contact@mathese.org)' },
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetch(url, { headers: { 'User-Agent': 'MaThese/1.0' }, signal: AbortSignal.timeout(5000) });
     if (!res.ok) return [];
     const data: CrossRefResponse = await res.json();
     return (data?.message?.items ?? [])
-      .filter((item) => {
-        if (!item.title?.[0]) return false;
-        if (item.type && !VALID_TYPES.has(item.type)) return false;
-        if (isTitleFigureOrTable(item.title[0])) return false;
-        return true;
-      })
+      .filter((item) => item.title?.[0] && (!item.type || VALID_TYPES.has(item.type)) && !isTitleFigureOrTable(item.title[0]))
       .map((item) => {
         const titre = item.title![0];
-        const auteurs = (item.author ?? []).slice(0, 4)
-          .map((a) => [a.given, a.family].filter(Boolean).join(' ')).join(', ')
-          + ((item.author ?? []).length > 4 ? ' et al.' : '');
-        const annee = String(item.published?.['date-parts']?.[0]?.[0] ?? '');
+        const auteurs = (item.author ?? []).slice(0, 4).map((a) => [a.given, a.family].filter(Boolean).join(' ')).join(', ') + ((item.author ?? []).length > 4 ? ' et al.' : '');
         const doi = item.DOI ?? null;
-        const articleUrl = item.URL ?? (doi ? `https://doi.org/${doi}` : null);
-        const abstract = item.abstract
-          ? item.abstract.replace(/<[^>]+>/g, '').slice(0, 400) : null;
-        return { titre, auteurs, annee, doi, url: articleUrl, abstract, type: item.type ?? null, source: 'CrossRef' };
+        return { titre, auteurs, annee: String(item.published?.['date-parts']?.[0]?.[0] ?? ''), doi, url: item.URL ?? (doi ? `https://doi.org/${doi}` : null), abstract: item.abstract ? item.abstract.replace(/<[^>]+>/g, '').slice(0, 400) : null, type: item.type ?? null, source: 'CrossRef' };
       });
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 // ─── Semantic Scholar ─────────────────────────────────────────────────────────
 
-interface S2Paper {
-  title?: string;
-  authors?: { name: string }[];
-  year?: number | null;
-  externalIds?: { DOI?: string };
-  abstract?: string | null;
-  openAccessPdf?: { url: string } | null;
-}
+interface S2Paper { title?: string; authors?: { name: string }[]; year?: number | null; externalIds?: { DOI?: string }; abstract?: string | null; openAccessPdf?: { url: string } | null }
 
 async function rechercherSemanticScholar(query: string, nb = 6): Promise<ArticleResult[]> {
   const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&fields=title,authors,year,externalIds,abstract,openAccessPdf&limit=${Math.min(nb, 10)}`;
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'MaThese/1.0 (contact@mathese.org)' },
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetch(url, { headers: { 'User-Agent': 'MaThese/1.0' }, signal: AbortSignal.timeout(5000) });
     if (!res.ok) return [];
     const data = await res.json();
-    return (data?.data ?? [])
-      .filter((p: S2Paper) => p.title && !isTitleFigureOrTable(p.title))
-      .map((p: S2Paper) => {
-        const auteurs = (p.authors ?? []).slice(0, 4).map((a) => a.name).join(', ')
-          + ((p.authors ?? []).length > 4 ? ' et al.' : '');
-        const doi = p.externalIds?.DOI ?? null;
-        const articleUrl = p.openAccessPdf?.url ?? (doi ? `https://doi.org/${doi}` : null);
-        const abstract = p.abstract ? p.abstract.slice(0, 400) : null;
-        return { titre: p.title!, auteurs, annee: String(p.year ?? ''), doi, url: articleUrl, abstract, type: 'journal-article', source: 'Semantic Scholar' };
-      });
-  } catch {
-    return [];
-  }
+    return (data?.data ?? []).filter((p: S2Paper) => p.title && !isTitleFigureOrTable(p.title)).map((p: S2Paper) => {
+      const doi = p.externalIds?.DOI ?? null;
+      return { titre: p.title!, auteurs: (p.authors ?? []).slice(0, 4).map((a) => a.name).join(', ') + ((p.authors ?? []).length > 4 ? ' et al.' : ''), annee: String(p.year ?? ''), doi, url: p.openAccessPdf?.url ?? (doi ? `https://doi.org/${doi}` : null), abstract: p.abstract ? p.abstract.slice(0, 400) : null, type: 'journal-article', source: 'Semantic Scholar' };
+    });
+  } catch { return []; }
 }
 
 // ─── OpenAlex ────────────────────────────────────────────────────────────────
 
-interface OpenAlexWork {
-  title?: string;
-  authorships?: { author: { display_name: string } }[];
-  publication_year?: number | null;
-  doi?: string | null;
-  open_access?: { oa_url?: string | null };
-  abstract_inverted_index?: Record<string, number[]> | null;
-}
+interface OpenAlexWork { title?: string; authorships?: { author: { display_name: string } }[]; publication_year?: number | null; doi?: string | null; open_access?: { oa_url?: string | null }; abstract_inverted_index?: Record<string, number[]> | null }
 
 function reconstructAbstract(inv: Record<string, number[]>): string {
-  const positions: [number, string][] = [];
-  for (const [word, pos] of Object.entries(inv)) {
-    for (const p of pos) positions.push([p, word]);
-  }
-  positions.sort((a, b) => a[0] - b[0]);
-  return positions.map(([, w]) => w).join(' ').slice(0, 400);
+  const pos: [number, string][] = [];
+  for (const [word, positions] of Object.entries(inv)) for (const p of positions) pos.push([p, word]);
+  return pos.sort((a, b) => a[0] - b[0]).map(([, w]) => w).join(' ').slice(0, 400);
 }
 
 async function rechercherOpenAlex(query: string, nb = 6): Promise<ArticleResult[]> {
   const url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&filter=type:article&per-page=${Math.min(nb, 10)}&select=title,authorships,publication_year,doi,open_access,abstract_inverted_index`;
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'MaThese/1.0 (contact@mathese.org)' },
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetch(url, { headers: { 'User-Agent': 'MaThese/1.0' }, signal: AbortSignal.timeout(5000) });
     if (!res.ok) return [];
     const data = await res.json();
-    return (data?.results ?? [])
-      .filter((w: OpenAlexWork) => w.title && !isTitleFigureOrTable(w.title))
-      .map((w: OpenAlexWork) => {
-        const auteurs = (w.authorships ?? []).slice(0, 4).map((a) => a.author.display_name).join(', ')
-          + ((w.authorships ?? []).length > 4 ? ' et al.' : '');
-        const doi = w.doi ? w.doi.replace('https://doi.org/', '') : null;
-        const articleUrl = w.open_access?.oa_url ?? (doi ? `https://doi.org/${doi}` : null);
-        const abstract = w.abstract_inverted_index ? reconstructAbstract(w.abstract_inverted_index) : null;
-        return { titre: w.title!, auteurs, annee: String(w.publication_year ?? ''), doi, url: articleUrl, abstract, type: 'journal-article', source: 'OpenAlex' };
-      });
-  } catch {
-    return [];
-  }
+    return (data?.results ?? []).filter((w: OpenAlexWork) => w.title && !isTitleFigureOrTable(w.title)).map((w: OpenAlexWork) => {
+      const doi = w.doi ? w.doi.replace('https://doi.org/', '') : null;
+      return { titre: w.title!, auteurs: (w.authorships ?? []).slice(0, 4).map((a) => a.author.display_name).join(', ') + ((w.authorships ?? []).length > 4 ? ' et al.' : ''), annee: String(w.publication_year ?? ''), doi, url: w.open_access?.oa_url ?? (doi ? `https://doi.org/${doi}` : null), abstract: w.abstract_inverted_index ? reconstructAbstract(w.abstract_inverted_index) : null, type: 'journal-article', source: 'OpenAlex' };
+    });
+  } catch { return []; }
 }
-
-// ─── Fusion + dédoublonnage ───────────────────────────────────────────────────
 
 async function rechercherArticles(query: string, nb = 6): Promise<ArticleResult[]> {
   const perSource = Math.min(Math.ceil(nb / 2) + 2, 8);
-  const [crossref, semantic, openalex] = await Promise.all([
-    rechercherCrossRef(query, perSource),
-    rechercherSemanticScholar(query, perSource),
-    rechercherOpenAlex(query, perSource),
-  ]);
-
+  const [crossref, semantic, openalex] = await Promise.all([rechercherCrossRef(query, perSource), rechercherSemanticScholar(query, perSource), rechercherOpenAlex(query, perSource)]);
   const seen = new Set<string>();
   const results: ArticleResult[] = [];
   for (const article of [...crossref, ...semantic, ...openalex]) {
-    const key = article.doi
-      ? article.doi.toLowerCase()
-      : article.titre.toLowerCase().replace(/\s+/g, ' ').slice(0, 60);
-    if (!seen.has(key)) {
-      seen.add(key);
-      results.push(article);
-    }
+    const key = article.doi ? article.doi.toLowerCase() : article.titre.toLowerCase().replace(/\s+/g, ' ').slice(0, 60);
+    if (!seen.has(key)) { seen.add(key); results.push(article); }
   }
   return results.slice(0, nb);
 }
+
+// ─── Déclarations des outils (format Gemini) ─────────────────────────────────
+
+const functionDeclarations: FunctionDeclaration[] = [
+  {
+    name: 'rechercher_articles',
+    description: "Recherche des articles académiques sur CrossRef, Semantic Scholar et OpenAlex. À utiliser quand l'étudiant demande des articles, références ou littérature.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        query: { type: SchemaType.STRING, description: 'Mots-clés en anglais de préférence' },
+        nb: { type: SchemaType.NUMBER, description: 'Nombre de résultats souhaités (max 12)' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'generer_document_word',
+    description: "Déclenche la génération d'un document Word. À utiliser UNIQUEMENT quand l'étudiant demande un rapport, une synthèse ou un document à télécharger. Ne fournir QUE le titre.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        titre: { type: SchemaType.STRING, description: 'Titre académique court et descriptif (ex: "L\'IMSE au Bénin : Défis et Perspectives")' },
+      },
+      required: ['titre'],
+    },
+  },
+];
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
@@ -226,123 +182,100 @@ Règles :
 - Sois précis, encourageant, et adapte ton niveau au contexte académique
 - Si on te demande qui tu es : tu es "l'Agent IA de MaThèse"
 
-
 ⚠️ RÈGLE ABSOLUE — GÉNÉRATION DE DOCUMENT WORD :
-Si l'étudiant demande : un rapport, un document Word, une synthèse, "reprends le document", "génère le fichier", "avec plus de références"...
+Si l'étudiant demande : un rapport, un document Word, une synthèse, "reprends le document", "génère le fichier"...
 Tu DOIS obligatoirement DANS CET ORDRE :
 1. Si des références sont demandées : appeler rechercher_articles AVANT
 2. Écrire UNIQUEMENT : "Je génère votre document Word, veuillez patienter un instant... 📄"
-3. Appeler generer_document_word avec UNIQUEMENT :
-   - titre : titre académique court (ex: "L'IMSE au Bénin : Défis et Perspectives")
-   ✅ Le contenu du document est généré AUTOMATIQUEMENT — tu n'as pas à l'écrire
-   ❌ INTERDIT : écrire le contenu du document dans le chat
+3. Appeler generer_document_word avec UNIQUEMENT le titre académique court
+   ✅ Le contenu est généré AUTOMATIQUEMENT — ne pas l'écrire dans le chat
    ❌ INTERDIT : utiliser la demande de l'étudiant comme titre`;
-
-  const tools: Anthropic.Tool[] = [
-    {
-      name: 'rechercher_articles',
-      description: "Recherche des articles académiques sur CrossRef, Semantic Scholar et OpenAlex en parallèle. À utiliser quand l'étudiant demande des articles, références ou littérature.",
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          query: { type: 'string', description: 'Mots-clés en anglais de préférence' },
-          nb: { type: 'number', description: 'Nombre de résultats souhaités (max 12)' },
-        },
-        required: ['query'],
-      },
-    },
-    {
-      name: 'generer_document_word',
-      description: "Déclenche la génération d'un document Word. À utiliser UNIQUEMENT quand l'étudiant demande un rapport, une synthèse ou un document à télécharger. Le contenu sera généré automatiquement — tu n'as besoin de fournir QUE le titre.",
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          titre: { type: 'string', description: 'Titre académique court et descriptif (ex: "L\'IMSE au Bénin : Défis et Perspectives")' },
-        },
-        required: ['titre'],
-      },
-    },
-  ];
 
   const readableStream = new ReadableStream({
     async start(controller) {
       const encode = (text: string) => controller.enqueue(new TextEncoder().encode(text));
 
-      const cleanMessages: Anthropic.MessageParam[] = (
-        messages as Array<{ role: string; content: string; isError?: boolean }>
-      )
-        .filter((m) => !m.isError && m.content && m.content.trim() !== '')
-        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+      // Convertir les messages au format Gemini (role: 'user' | 'model')
+      const rawMessages = (messages as Array<{ role: string; content: string; isError?: boolean }>)
+        .filter((m) => !m.isError && m.content && m.content.trim() !== '');
 
-      let currentMessages: Anthropic.MessageParam[] = cleanMessages;
+      // Historique = tous les messages sauf le dernier
+      let geminiHistory: Content[] = rawMessages.slice(0, -1).map((m) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }],
+      }));
+
+      // Message courant = dernier message
+      const lastMsg = rawMessages[rawMessages.length - 1];
+      let currentParts: Part[] = [{ text: lastMsg?.content ?? '' }];
+
+      const model = genai.getGenerativeModel({
+        model: 'gemini-2.0-flash',
+        systemInstruction: systemPrompt,
+        tools: [{ functionDeclarations }],
+        generationConfig: { maxOutputTokens: 2000, temperature: 0.7 },
+      });
+
       let foundArticles: ArticleResult[] = [];
 
       try {
         // eslint-disable-next-line no-constant-condition
         while (true) {
-          let finalText = '';
-          const toolUses: { id: string; name: string; input: Record<string, unknown> }[] = [];
-          let stopReason: string | null = null;
+          const chat = model.startChat({ history: geminiHistory });
+          const result = await chat.sendMessageStream(currentParts);
 
-          let currentToolId = '';
-          let currentToolName = '';
-          let currentToolInput = '';
-          let insideTool = false;
+          let fullText = '';
+          const functionCalls: { name: string; args: Record<string, unknown> }[] = [];
 
-          const stream = anthropic.messages.stream({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 4000,
-            system: systemPrompt,
-            tools,
-            messages: currentMessages,
-          });
-
-          for await (const chunk of stream) {
-            if (chunk.type === 'content_block_start') {
-              if (chunk.content_block.type === 'text') {
-                insideTool = false;
-              } else if (chunk.content_block.type === 'tool_use') {
-                insideTool = true;
-                currentToolId = chunk.content_block.id;
-                currentToolName = chunk.content_block.name;
-                currentToolInput = '';
+          for await (const chunk of result.stream) {
+            for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
+              if ('text' in part && part.text) {
+                encode(part.text);
+                fullText += part.text;
               }
-            } else if (chunk.type === 'content_block_delta') {
-              if (chunk.delta.type === 'text_delta' && !insideTool) {
-                encode(chunk.delta.text);
-                finalText += chunk.delta.text;
-              } else if (chunk.delta.type === 'input_json_delta') {
-                currentToolInput += chunk.delta.partial_json;
+              if ('functionCall' in part && part.functionCall) {
+                functionCalls.push({
+                  name: part.functionCall.name ?? '',
+                  args: (part.functionCall.args ?? {}) as Record<string, unknown>,
+                });
               }
-            } else if (chunk.type === 'content_block_stop') {
-              if (insideTool && currentToolId) {
-                let parsedInput: Record<string, unknown> = {};
-                try { parsedInput = JSON.parse(currentToolInput); } catch { /* ignore */ }
-                toolUses.push({ id: currentToolId, name: currentToolName, input: parsedInput });
-                insideTool = false;
-                currentToolId = '';
-              }
-            } else if (chunk.type === 'message_delta') {
-              stopReason = chunk.delta.stop_reason ?? null;
-            } else if (chunk.type === 'message_stop') {
-              stopReason = stopReason ?? 'end_turn';
             }
           }
 
-          const contentBlocks: Anthropic.MessageParam['content'] = [];
-          if (finalText) contentBlocks.push({ type: 'text', text: finalText });
-          for (const tu of toolUses) {
-            contentBlocks.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
+          // Vérifier aussi la réponse finale pour les function calls manqués
+          try {
+            const finalRes = await result.response;
+            for (const part of finalRes.candidates?.[0]?.content?.parts ?? []) {
+              if ('functionCall' in part && part.functionCall) {
+                const already = functionCalls.some((fc) => fc.name === part.functionCall?.name);
+                if (!already) {
+                  functionCalls.push({ name: part.functionCall.name ?? '', args: (part.functionCall.args ?? {}) as Record<string, unknown> });
+                }
+              }
+            }
+          } catch { /* ignore */ }
+
+          if (functionCalls.length === 0) break;
+
+          // Ajouter la réponse du modèle à l'historique
+          const modelParts: Part[] = [];
+          if (fullText) modelParts.push({ text: fullText });
+          for (const fc of functionCalls) {
+            modelParts.push({ functionCall: { name: fc.name, args: fc.args } });
           }
+          geminiHistory = [
+            ...geminiHistory,
+            { role: 'user', parts: currentParts },
+            { role: 'model', parts: modelParts },
+          ];
 
-          if (stopReason !== 'tool_use' || toolUses.length === 0) break;
+          // ── Exécuter les outils ──
+          const functionResponseParts: Part[] = [];
 
-          const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-          for (const toolUse of toolUses) {
-            if (toolUse.name === 'rechercher_articles') {
-              const query = String(toolUse.input.query ?? '');
-              const nb = typeof toolUse.input.nb === 'number' ? toolUse.input.nb : 6;
+          for (const fc of functionCalls) {
+            if (fc.name === 'rechercher_articles') {
+              const query = String(fc.args.query ?? '');
+              const nb = typeof fc.args.nb === 'number' ? fc.args.nb : 6;
 
               encode(`\n__STATUS__Recherche dans CrossRef, Semantic Scholar et OpenAlex : "${query}"...__STATUS_END__\n`);
 
@@ -356,38 +289,32 @@ Tu DOIS obligatoirement DANS CET ORDRE :
                     (a.doi ? `   DOI : ${a.doi}\n` : '') +
                     (a.abstract ? `   Résumé : ${a.abstract}\n` : '')
                   ).join('\n')
-                : 'Aucun article trouvé pour cette requête.';
+                : 'Aucun article trouvé.';
 
-              toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: resultText });
+              functionResponseParts.push({
+                functionResponse: { name: fc.name, response: { result: resultText } },
+              });
 
-            } else if (toolUse.name === 'generer_document_word') {
-              let titre = String(toolUse.input.titre ?? 'Rapport académique');
-              // Sanitize si Claude a quand même mis la demande utilisateur comme titre
+            } else if (fc.name === 'generer_document_word') {
+              let titre = String(fc.args.titre ?? 'Rapport académique');
               if (titre.length > 100 || /^(reprends|génère|crée|fais|donne|avec|update|écris)/i.test(titre.trim())) {
                 titre = 'Rapport académique';
               }
-              // Émettre le signal avec juste le titre — le contenu sera généré par /api/ai/generate-doc
               encode(`\n__WORD_DOC__${JSON.stringify({ titre })}__WORD_DOC_END__\n`);
-              toolResults.push({
-                type: 'tool_result',
-                tool_use_id: toolUse.id,
-                content: `Titre "${titre}" transmis. Le document Word sera généré automatiquement.`,
+              functionResponseParts.push({
+                functionResponse: { name: fc.name, response: { result: `Document Word "${titre}" transmis au client.` } },
               });
             }
           }
 
-          currentMessages = [
-            ...currentMessages,
-            { role: 'assistant', content: contentBlocks },
-            { role: 'user', content: toolResults },
-          ];
+          currentParts = functionResponseParts;
         }
 
         if (foundArticles.length > 0) {
           encode('\n\n__SEARCH_RESULTS__' + JSON.stringify(foundArticles));
         }
       } catch (err) {
-        console.error('[chat/route] Error:', err);
+        console.error('[chat/route] Gemini Error:', err);
         encode('\n\n__ERROR__');
       }
 
