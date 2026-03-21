@@ -16,8 +16,8 @@ import {
 // ─── Modèles IA disponibles ───────────────────────────────────────────────────
 
 const AI_MODELS = [
-  { id: 'gemini-2.0-flash',          label: 'Gemini 2.0 Flash', desc: 'Rapide · Économique',  color: 'text-blue-600' },
-  { id: 'gemini-1.5-flash-latest',   label: 'Gemini 1.5 Flash', desc: 'Stable',               color: 'text-sky-600' },
+  { id: 'gemini-2.5-flash',          label: 'Gemini 2.5 Flash', desc: 'Rapide · Économique',  color: 'text-blue-600' },
+  { id: 'gemini-2.0-flash',          label: 'Gemini 2.0 Flash', desc: 'Stable · Économique',  color: 'text-sky-600' },
   { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku',     desc: 'Ultra-rapide · Léger', color: 'text-emerald-600' },
   { id: 'claude-sonnet-4-6',         label: 'Claude Sonnet',    desc: 'Équilibré · Précis',   color: 'text-violet-600' },
   { id: 'claude-opus-4-6',           label: 'Claude Opus',      desc: 'Très puissant · Lent', color: 'text-purple-700' },

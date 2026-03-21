@@ -1,11 +1,11 @@
 import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { GoogleGenerativeAI, SchemaType, type Content, type Part, type FunctionDeclaration } from '@google/generative-ai';
+import { GoogleGenAI, Type } from '@google/genai';
 
 export const maxDuration = 60;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const genai = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY!);
+const genai = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY! });
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -225,17 +225,18 @@ async function handleClaude(
   encodeResult(encode, foundArticles);
 }
 
-// ─── Handler Gemini ───────────────────────────────────────────────────────────
+// ─── Handler Gemini (nouveau SDK @google/genai) ───────────────────────────────
 
-const geminiTools: FunctionDeclaration[] = [
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const geminiTools: any[] = [
   {
     name: 'rechercher_articles',
     description: "Recherche des articles académiques sur CrossRef, Semantic Scholar et OpenAlex. À utiliser quand l'étudiant demande des articles, références ou littérature.",
     parameters: {
-      type: SchemaType.OBJECT,
+      type: Type.OBJECT,
       properties: {
-        query: { type: SchemaType.STRING, description: 'Mots-clés en anglais de préférence' },
-        nb: { type: SchemaType.NUMBER, description: 'Nombre de résultats souhaités (max 12)' },
+        query: { type: Type.STRING, description: 'Mots-clés en anglais de préférence' },
+        nb: { type: Type.NUMBER, description: 'Nombre de résultats souhaités (max 12)' },
       },
       required: ['query'],
     },
@@ -244,9 +245,9 @@ const geminiTools: FunctionDeclaration[] = [
     name: 'generer_document_word',
     description: "Déclenche la génération d'un document Word. À utiliser UNIQUEMENT quand l'étudiant demande un rapport, une synthèse ou un document. Ne fournir QUE le titre.",
     parameters: {
-      type: SchemaType.OBJECT,
+      type: Type.OBJECT,
       properties: {
-        titre: { type: SchemaType.STRING, description: 'Titre académique court et descriptif' },
+        titre: { type: Type.STRING, description: 'Titre académique court et descriptif' },
       },
       required: ['titre'],
     },
@@ -259,60 +260,58 @@ async function handleGemini(
   rawMessages: Array<{ role: string; content: string }>,
   encode: (t: string) => void,
 ) {
-  let geminiHistory: Content[] = rawMessages.slice(0, -1).map((m) => ({
+  // Construire l'historique au format nouveau SDK
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let contents: any[] = rawMessages.map((m) => ({
     role: m.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: m.content }],
   }));
 
-  const lastMsg = rawMessages[rawMessages.length - 1];
-  let currentParts: Part[] = [{ text: lastMsg?.content ?? '' }];
-
-  const model = genai.getGenerativeModel({
-    model: modelName,
-    systemInstruction: systemPrompt,
-    tools: [{ functionDeclarations: geminiTools }],
-    generationConfig: { maxOutputTokens: 2000, temperature: 0.7 },
-  });
-
   let foundArticles: ArticleResult[] = [];
-  let geminiIterations = 0;
+  let iterations = 0;
 
-  while (geminiIterations++ < 5) {
-    const chat = model.startChat({ history: geminiHistory });
-    const result = await chat.sendMessageStream(currentParts);
+  while (iterations++ < 5) {
+    const stream = await genai.models.generateContentStream({
+      model: modelName,
+      contents,
+      config: {
+        systemInstruction: systemPrompt,
+        tools: [{ functionDeclarations: geminiTools }],
+        maxOutputTokens: 2000,
+        temperature: 0.7,
+      },
+    });
 
     let fullText = '';
-    const functionCalls: { name: string; args: Record<string, unknown> }[] = [];
+    const functionCalls: { name: string; args: Record<string, unknown>; id?: string }[] = [];
 
-    for await (const chunk of result.stream) {
+    for await (const chunk of stream) {
+      // Texte streamé
+      if (chunk.text) { encode(chunk.text); fullText += chunk.text; }
+      // Function calls dans les parts
       for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
-        if ('text' in part && part.text) { encode(part.text); fullText += part.text; }
-        if ('functionCall' in part && part.functionCall) {
-          functionCalls.push({ name: part.functionCall.name ?? '', args: (part.functionCall.args ?? {}) as Record<string, unknown> });
+        if (part.functionCall) {
+          const already = functionCalls.some((fc) => fc.name === part.functionCall!.name);
+          if (!already) functionCalls.push({
+            name: part.functionCall.name ?? '',
+            args: (part.functionCall.args ?? {}) as Record<string, unknown>,
+            id: part.functionCall.id,
+          });
         }
       }
     }
 
-    // Vérifier aussi la réponse finale pour les function calls manqués
-    try {
-      const finalRes = await result.response;
-      for (const part of finalRes.candidates?.[0]?.content?.parts ?? []) {
-        if ('functionCall' in part && part.functionCall) {
-          if (!functionCalls.some((fc) => fc.name === part.functionCall?.name)) {
-            functionCalls.push({ name: part.functionCall.name ?? '', args: (part.functionCall.args ?? {}) as Record<string, unknown> });
-          }
-        }
-      }
-    } catch { /* ignore */ }
-
     if (functionCalls.length === 0) break;
 
-    const modelParts: Part[] = [];
+    // Ajouter la réponse du modèle à l'historique
+    const modelParts: { text?: string; functionCall?: { name: string; args: Record<string, unknown>; id?: string } }[] = [];
     if (fullText) modelParts.push({ text: fullText });
-    for (const fc of functionCalls) modelParts.push({ functionCall: { name: fc.name, args: fc.args } });
-    geminiHistory = [...geminiHistory, { role: 'user', parts: currentParts }, { role: 'model', parts: modelParts }];
+    for (const fc of functionCalls) modelParts.push({ functionCall: { name: fc.name, args: fc.args, id: fc.id } });
+    contents = [...contents, { role: 'model', parts: modelParts }];
 
-    const functionResponseParts: Part[] = [];
+    // Exécuter les outils
+    const responseParts: { functionResponse: { name: string; id?: string; response: unknown } }[] = [];
+
     for (const fc of functionCalls) {
       if (fc.name === 'rechercher_articles') {
         const query = String(fc.args.query ?? '');
@@ -323,15 +322,16 @@ async function handleGemini(
         const resultText = articles.length > 0
           ? articles.map((a, i) => `[${i + 1}] **${a.titre}** (${a.source})\n   Auteurs : ${a.auteurs || 'Inconnu'} · Année : ${a.annee || '?'}\n${a.doi ? `   DOI : ${a.doi}\n` : ''}${a.abstract ? `   Résumé : ${a.abstract}\n` : ''}`).join('\n')
           : 'Aucun article trouvé.';
-        functionResponseParts.push({ functionResponse: { name: fc.name, response: { result: resultText } } });
+        responseParts.push({ functionResponse: { name: fc.name, id: fc.id, response: { result: resultText } } });
       } else if (fc.name === 'generer_document_word') {
         let titre = String(fc.args.titre ?? 'Rapport académique');
         if (titre.length > 100 || /^(reprends|génère|crée|fais|donne|avec|update|écris)/i.test(titre.trim())) titre = 'Rapport académique';
         encode(`\n__WORD_DOC__${JSON.stringify({ titre })}__WORD_DOC_END__\n`);
-        functionResponseParts.push({ functionResponse: { name: fc.name, response: { result: `Document "${titre}" transmis.` } } });
+        responseParts.push({ functionResponse: { name: fc.name, id: fc.id, response: { result: `Document "${titre}" transmis.` } } });
       }
     }
-    currentParts = functionResponseParts;
+
+    contents = [...contents, { role: 'user', parts: responseParts }];
   }
 
   encodeResult(encode, foundArticles);
