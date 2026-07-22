@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/api/cron/keep-alive",
+      "schedule": "0 0 * * *"
+    }
+  ],
   "functions": {
     "app/api/ai/chat/route.ts": { "maxDuration": 60 },
     "app/api/ai/communication/route.ts": { "maxDuration": 60 },
