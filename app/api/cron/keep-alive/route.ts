@@ -12,11 +12,9 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  try {
-    const { error } = await supabase.from('utilisateurs').select('id', { count: 'exact', head: true });
-    if (error) throw error;
-    return NextResponse.json({ ok: true, timestamp: new Date().toISOString() });
-  } catch (e: unknown) {
-    return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });
+  const { error } = await supabase.from('utilisateurs').select('id', { count: 'exact', head: true });
+  if (error) {
+    return NextResponse.json({ ok: false, error: error.message, details: error.details, hint: error.hint, code: error.code }, { status: 500 });
   }
+  return NextResponse.json({ ok: true, timestamp: new Date().toISOString() });
 }
